@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ "$#" -ne 1 ]; then
-  echo "usage: require-atlas-core-tag-rulesets.sh <missing-rulesets message>" >&2
+if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
+  echo "usage: require-atlas-core-tag-rulesets.sh <missing-rulesets message> [release-app-id]" >&2
   exit 2
 fi
 
 error_message="$1"
+release_app_id="${2:-}"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 creation_id="$(
@@ -28,6 +29,11 @@ temp_dir="$(mktemp -d)"
 trap 'rm -rf "$temp_dir"' EXIT
 gh api "repos/$GITHUB_REPOSITORY/rulesets/$creation_id" > "$temp_dir/creation.json"
 gh api "repos/$GITHUB_REPOSITORY/rulesets/$immutability_id" > "$temp_dir/immutability.json"
-node "$script_dir/../../tools/atlas-core-release/dist/cli.js" validate-tag-rulesets \
-  --creation "$temp_dir/creation.json" \
+validation_args=(
+  --creation "$temp_dir/creation.json"
   --immutability "$temp_dir/immutability.json"
+)
+if [ -n "$release_app_id" ]; then
+  validation_args+=(--release-app-id "$release_app_id")
+fi
+node "$script_dir/../../tools/atlas-core-release/dist/cli.js" validate-tag-rulesets "${validation_args[@]}"

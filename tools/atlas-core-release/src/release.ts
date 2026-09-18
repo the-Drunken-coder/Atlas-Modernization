@@ -115,9 +115,15 @@ export interface ObservedPublication {
   sealedManifest?: ReleaseManifest;
   imageDigest?: string;
   npmIntegrity?: string;
+  npmTags?: { latest?: string; recovered?: string };
   githubRelease?: "absent" | "draft" | "sealed" | "published";
-  githubLatest?: boolean;
   highestPublishedVersion?: string;
+}
+
+export interface RulesetBypassActor {
+  actor_id?: number;
+  actor_type?: string;
+  bypass_mode?: string;
 }
 
 export interface Ruleset {
@@ -126,18 +132,19 @@ export interface Ruleset {
   enforcement?: string;
   conditions?: { ref_name?: { include?: string[]; exclude?: string[] } };
   rules?: Array<{ type?: string }>;
+  bypass_actors?: RulesetBypassActor[];
 }
 
 export type PublicationOperation =
   | "seal-github-release"
   | "promote-image"
   | "publish-npm"
+  | "set-npm-tag"
   | "publish-github-release";
 
 export interface PublicationPlan {
   operations: PublicationOperation[];
   npmTag: "latest" | "recovered";
-  githubLatest: boolean;
   complete: boolean;
 }
 
@@ -185,9 +192,13 @@ export function evaluateWorkflow(
     )
     .sort((left, right) => right.run_attempt - left.run_attempt || right.id - left.id)[0];
   if (!run) return { state: "pending", reason: `${requirement.path} has no exact push run for ${sourceSha}` };
-  if (run.status !== "completed") return { state: "pending", reason: `${requirement.path} run ${run.id} is ${run.status}` };
+  if (run.status !== "completed")
+    return { state: "pending", reason: `${requirement.path} run ${run.id} is ${run.status}` };
   if (run.conclusion !== "success") {
-    return { state: "blocked", reason: `${requirement.path} run ${run.id} concluded ${run.conclusion ?? "without a result"}` };
+    return {
+      state: "blocked",
+      reason: `${requirement.path} run ${run.id} concluded ${run.conclusion ?? "without a result"}`
+    };
   }
   const jobs = jobsByRun.get(run.id) ?? [];
   for (const name of requirement.jobs) {
@@ -394,9 +405,19 @@ export function parseObservedPublication(value: unknown): ObservedPublication {
   const observed = objectValue(value, "observed publication");
   const result: ObservedPublication = {};
   if (observed.sealedManifest !== undefined) result.sealedManifest = parseReleaseManifest(observed.sealedManifest);
-  if (observed.imageDigest !== undefined) result.imageDigest = stringValue(observed.imageDigest, "observed image digest");
+  if (observed.imageDigest !== undefined)
+    result.imageDigest = stringValue(observed.imageDigest, "observed image digest");
   if (observed.npmIntegrity !== undefined) {
     result.npmIntegrity = stringValue(observed.npmIntegrity, "observed npm integrity");
+  }
+  if (observed.npmTags !== undefined) {
+    const tags = objectValue(observed.npmTags, "observed npm dist-tags");
+    result.npmTags = {
+      ...(tags.latest === undefined ? {} : { latest: validateVersion(stringValue(tags.latest, "npm latest tag")) }),
+      ...(tags.recovered === undefined
+        ? {}
+        : { recovered: validateVersion(stringValue(tags.recovered, "npm recovered tag")) })
+    };
   }
   if (observed.githubRelease !== undefined) {
     const state = stringValue(observed.githubRelease, "observed GitHub Release state");
@@ -409,10 +430,6 @@ export function parseObservedPublication(value: unknown): ObservedPublication {
     result.highestPublishedVersion = validateVersion(
       stringValue(observed.highestPublishedVersion, "highest published version")
     );
-  }
-  if (observed.githubLatest !== undefined) {
-    if (typeof observed.githubLatest !== "boolean") throw new Error("observed GitHub latest state must be a boolean");
-    result.githubLatest = observed.githubLatest;
   }
   return result;
 }
@@ -444,6 +461,23 @@ export function parseRuleset(value: unknown): Ruleset {
       return rule.type === undefined ? {} : { type: stringValue(rule.type, `tag ruleset rule ${index} type`) };
     });
   }
+  if (source.bypass_actors !== undefined) {
+    if (!Array.isArray(source.bypass_actors)) throw new Error("Tag ruleset bypass actors must be an array");
+    parsed.bypass_actors = source.bypass_actors.map((value, index) => {
+      const actor = objectValue(value, `tag ruleset bypass actor ${index}`);
+      return {
+        ...(actor.actor_id === undefined
+          ? {}
+          : { actor_id: integerValue(actor.actor_id, `tag ruleset bypass actor ${index} ID`) }),
+        ...(actor.actor_type === undefined
+          ? {}
+          : { actor_type: stringValue(actor.actor_type, `tag ruleset bypass actor ${index} type`) }),
+        ...(actor.bypass_mode === undefined
+          ? {}
+          : { bypass_mode: stringValue(actor.bypass_mode, `tag ruleset bypass actor ${index} mode`) })
+      };
+    });
+  }
   return parsed;
 }
 
@@ -461,10 +495,7 @@ export function candidateIdentity(manifest: ReleaseManifest): string {
 
 export function planPublication(manifest: ReleaseManifest, observed: ObservedPublication): PublicationPlan {
   validateManifest(manifest);
-  if (
-    (observed.githubRelease === "sealed" || observed.githubRelease === "published") &&
-    !observed.sealedManifest
-  ) {
+  if ((observed.githubRelease === "sealed" || observed.githubRelease === "published") && !observed.sealedManifest) {
     throw new Error("An immutable GitHub Release is missing its sealed manifest");
   }
   if (observed.sealedManifest && candidateIdentity(observed.sealedManifest) !== candidateIdentity(manifest)) {
@@ -479,11 +510,10 @@ export function planPublication(manifest: ReleaseManifest, observed: ObservedPub
   if (observed.githubRelease === "published" && (!observed.imageDigest || !observed.npmIntegrity)) {
     throw new Error("The final GitHub Release was published before its image and npm package were complete");
   }
-  if (observed.githubRelease === "published" && observed.githubLatest === undefined) {
-    throw new Error("The final GitHub Release is missing its latest-release disposition");
-  }
   const isNewest =
-    !observed.highestPublishedVersion || compareVersions(manifest.release.version, observed.highestPublishedVersion) >= 0;
+    !observed.highestPublishedVersion ||
+    compareVersions(manifest.release.version, observed.highestPublishedVersion) >= 0;
+  const npmTag = isNewest ? "latest" : "recovered";
   const operations: PublicationOperation[] = [];
   if (
     !observed.sealedManifest ||
@@ -495,13 +525,11 @@ export function planPublication(manifest: ReleaseManifest, observed: ObservedPub
   }
   if (!observed.imageDigest) operations.push("promote-image");
   if (!observed.npmIntegrity) operations.push("publish-npm");
-  if (observed.githubRelease !== "published" || observed.githubLatest !== isNewest) {
-    operations.push("publish-github-release");
-  }
+  if (observed.npmIntegrity && observed.npmTags?.[npmTag] !== manifest.release.version) operations.push("set-npm-tag");
+  if (observed.githubRelease !== "published") operations.push("publish-github-release");
   return {
     operations,
-    npmTag: isNewest ? "latest" : "recovered",
-    githubLatest: isNewest,
+    npmTag,
     complete: operations.length === 0
   };
 }
@@ -510,11 +538,12 @@ export interface PublicationAdapters {
   inspect(): Promise<ObservedPublication>;
   github: {
     seal(manifest: ReleaseManifest): Promise<void>;
-    publish(manifest: ReleaseManifest, latest: boolean): Promise<void>;
+    publish(manifest: ReleaseManifest): Promise<void>;
   };
   registry: {
     promoteImage(manifest: ReleaseManifest): Promise<void>;
     publishPackage(manifest: ReleaseManifest, tag: "latest" | "recovered"): Promise<void>;
+    setPackageTag(manifest: ReleaseManifest, tag: "latest" | "recovered"): Promise<void>;
   };
   process: {
     verify(manifest: ReleaseManifest): Promise<void>;
@@ -545,8 +574,11 @@ export async function reconcilePublication(
         case "publish-npm":
           await adapters.registry.publishPackage(manifest, plan.npmTag);
           break;
+        case "set-npm-tag":
+          await adapters.registry.setPackageTag(manifest, plan.npmTag);
+          break;
         case "publish-github-release":
-          await adapters.github.publish(manifest, plan.githubLatest);
+          await adapters.github.publish(manifest);
           break;
         default:
           throw new Error("Publication planner returned no executable operation");
@@ -618,14 +650,26 @@ export function validateNpmAttestation(
   }
 }
 
-export function validateTagRulesets(creation: Ruleset, immutability: Ruleset): void {
+export function validateTagRulesets(creation: Ruleset, immutability: Ruleset, expectedAppId?: number): void {
+  if (expectedAppId !== undefined && (!Number.isSafeInteger(expectedAppId) || expectedAppId < 1)) {
+    throw new Error("Release App ID must be a positive integer");
+  }
   validateTagRuleset(creation, "Atlas Core release tag creation", ["creation"], ["update", "deletion"]);
-  validateTagRuleset(
-    immutability,
-    "Atlas Core release tag immutability",
-    ["update", "deletion"],
-    ["creation"]
-  );
+  validateTagRuleset(immutability, "Atlas Core release tag immutability", ["update", "deletion"], ["creation"]);
+  const creationBypasses = creation.bypass_actors ?? [];
+  if (
+    creationBypasses.length !== 1 ||
+    !Number.isSafeInteger(creationBypasses[0]?.actor_id) ||
+    (creationBypasses[0]?.actor_id ?? 0) < 1 ||
+    creationBypasses[0]?.actor_type !== "Integration" ||
+    creationBypasses[0]?.bypass_mode !== "always" ||
+    (expectedAppId !== undefined && creationBypasses[0]?.actor_id !== expectedAppId)
+  ) {
+    throw new Error("Atlas Core release tag creation must allow only the intended release App to bypass creation");
+  }
+  if ((immutability.bypass_actors ?? []).length !== 0) {
+    throw new Error("Atlas Core release tag immutability must not allow bypass actors");
+  }
 }
 
 function validateTagRuleset(

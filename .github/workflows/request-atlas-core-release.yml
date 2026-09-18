@@ -75,20 +75,6 @@ jobs:
             echo "tag=atlas-core-v$VERSION"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Require protected immutable release tags
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          bash .github/scripts/require-atlas-core-tag-rulesets.sh \
-            "Create both active Atlas Core release tag rulesets before reserving a version."
-
-      - name: Require immutable GitHub Releases
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          node tools/atlas-core-release/dist/cli.js require-immutable-releases \
-            --repository "$GITHUB_REPOSITORY"
-
       - name: Wait for exact required Core CI
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -136,10 +122,11 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ vars.ATLAS_CORE_RELEASE_APP_CLIENT_ID }}
+          client-id: ${{ vars.ATLAS_CORE_RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.ATLAS_CORE_RELEASE_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: Atlas-Modernization
+          permission-administration: read
           permission-contents: write
 
       - name: Checkout the pinned source
@@ -155,6 +142,18 @@ jobs:
         with:
           name: atlas-core-tag-tool-${{ github.run_id }}
           path: ${{ runner.temp }}/atlas-core-tag-tool
+
+      - name: Recheck release protections with the release App
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          release_app_id="$(gh api /installation --jq .app_id)"
+          bash .github/scripts/require-atlas-core-tag-rulesets.sh \
+            "Create both active Atlas Core release tag rulesets before reserving a version." \
+            "$release_app_id"
+          node "$RUNNER_TEMP/atlas-core-tag-tool/cli.js" require-immutable-releases \
+            --repository "$GITHUB_REPOSITORY"
 
       - name: Create or verify annotated release tag
         env:

@@ -44,7 +44,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "biome lint --config-path biome.json .",
     "format:check": "biome check --linter-enabled=false --config-path biome.json .",
-    "test": "vitest run",
+    "test": "node --test scripts/*.node-test.mjs && vitest run",
     "test:package": "node test/packed-install-smoke.mjs",
     "test:portable-package": "node test/portable-packed-cli.mjs",
     "check": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run build && npm run test:package && npm run test:portable-package"

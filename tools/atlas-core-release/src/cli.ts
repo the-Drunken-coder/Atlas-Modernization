@@ -27,8 +27,7 @@ import {
   validateNpmAttestation,
   validateTagRulesets,
   validateVersion,
-  versionFromTag,
-  stringValue
+  versionFromTag
 } from "./release.js";
 
 const [command, ...rawArgs] = process.argv.slice(2);
@@ -71,6 +70,9 @@ switch (command) {
   case "reconcile-publication":
     await reconcilePublicationCommand();
     break;
+  case "verify-completed-publication":
+    await verifyCompletedPublicationCommand();
+    break;
   case "inspect-publication":
     await inspectPublicationCommand();
     break;
@@ -86,7 +88,8 @@ switch (command) {
   case "validate-tag-rulesets":
     validateTagRulesets(
       parseRuleset(readJSON(required(options, "creation"))),
-      parseRuleset(readJSON(required(options, "immutability")))
+      parseRuleset(readJSON(required(options, "immutability"))),
+      options.has("release-app-id") ? Number(required(options, "release-app-id")) : undefined
     );
     break;
   case "require-immutable-releases":
@@ -97,7 +100,7 @@ switch (command) {
     break;
   default:
     throw new Error(
-      "usage: atlas-core-release <validate-version|version-from-tag|verify-ci|validate-reservation|reserve-tag|validate-release-tag|prepare-package|validate-notes|create-manifest|verify-bundle|plan-publication|inspect-publication|reconcile-publication|inspect-image|promote-image|validate-npm-attestation|validate-tag-rulesets|require-immutable-releases|status> [--name value]"
+      "usage: atlas-core-release <validate-version|version-from-tag|verify-ci|validate-reservation|reserve-tag|validate-release-tag|prepare-package|validate-notes|create-manifest|verify-bundle|plan-publication|inspect-publication|reconcile-publication|verify-completed-publication|inspect-image|promote-image|validate-npm-attestation|validate-tag-rulesets|require-immutable-releases|status> [--name value]"
     );
 }
 
@@ -133,10 +136,7 @@ function validateReservation(): void {
     return;
   }
   if (existing === "conflict") throw new Error(`${tag} already exists with a different or lightweight target`);
-  const tags = runGit(["tag", "--list", "atlas-core-v*"])
-    .split("\n")
-    .filter(Boolean)
-    .map(versionFromTag);
+  const tags = runGit(["tag", "--list", "atlas-core-v*"]).split("\n").filter(Boolean).map(versionFromTag);
   requireUnreservedVersion(version, tags);
   process.stdout.write("available\n");
 }
@@ -190,6 +190,8 @@ function preparePackage(): void {
   const workspace = workspaceValue === undefined ? undefined : objectValue(workspaceValue, "Atlas Core lock entry");
   if (!workspace) throw new Error("package-lock.json does not contain the Atlas Core workspace");
   workspace.version = version;
+  packages["surfaces/core-cli"] = workspace;
+  lock.packages = packages;
   writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
 }
 
@@ -219,6 +221,14 @@ async function reconcilePublicationCommand(): Promise<void> {
   const root = resolve(required(options, "root"));
   const manifest = parseReleaseManifest(readJSON(manifestPath));
   const plan = await reconcileLivePublication(manifest, root);
+  process.stdout.write(`${JSON.stringify(plan, null, 2)}\n`);
+}
+
+async function verifyCompletedPublicationCommand(): Promise<void> {
+  const manifestPath = required(options, "manifest");
+  const root = resolve(required(options, "root"));
+  const manifest = parseReleaseManifest(readJSON(manifestPath));
+  const plan = await verifyCompletedLivePublication(manifest, root);
   process.stdout.write(`${JSON.stringify(plan, null, 2)}\n`);
 }
 
@@ -269,7 +279,7 @@ async function status(): Promise<void> {
   const sourceSha = runGit(["rev-list", "-n", "1", tag], true);
   const repository = options.get("repository") ?? process.env.GITHUB_REPOSITORY ?? repositoryFromRemote();
   const release = repository
-    ? tryExec("gh", ["api", `repos/${repository}/releases/tags/${tag}`])
+    ? inspectRelease(repository, tag)
     : { ok: false, stdout: "", stderr: "Unable to identify the GitHub repository" };
   const npm = tryExec("npm", ["view", `atlas-core@${version}`, "version", "dist.integrity", "--json"]);
   const image = tryExec("docker", [
@@ -300,12 +310,13 @@ async function status(): Promise<void> {
       const asset = objectValue(value, `GitHub Release status asset ${index}`);
       return asset.name === "release-manifest.json";
     });
-  const npmState = npm.ok ? parseJSON(npm.stdout, "npm package status") : externalFailure(npm.stderr, /E404|404 Not Found|No match found/iu);
-  const imageState = image.ok
-    ? "visible"
-    : externalFailure(image.stderr, /manifest unknown|not found|HTTP 404/iu);
+  const npmState = npm.ok
+    ? parseJSON(npm.stdout, "npm package status")
+    : externalFailure(npm.stderr, /E404|404 Not Found|No match found/iu);
+  const imageState = image.ok ? "visible" : externalFailure(image.stderr, /manifest unknown|not found|HTTP 404/iu);
   const unavailable = [github, npmState, imageState].some(
-    (state) => typeof state === "object" && state !== null && objectValue(state, "external status").state === "unavailable"
+    (state) =>
+      typeof state === "object" && state !== null && objectValue(state, "external status").state === "unavailable"
   );
   let verification:
     | { state: "not-run"; detail: string }
@@ -316,10 +327,7 @@ async function status(): Promise<void> {
     detail: "A final immutable release with its manifest is not present."
   };
   const finalCandidate =
-    githubRecord?.draft === false &&
-    githubRecord.prerelease === false &&
-    githubRecord.immutable === true &&
-    sealed;
+    githubRecord?.draft === false && githubRecord.prerelease === false && githubRecord.immutable === true && sealed;
   if (finalCandidate && repository) {
     const root = mkdtempSync(join(tmpdir(), "atlas-core-status-"));
     try {
@@ -346,9 +354,7 @@ async function status(): Promise<void> {
         }
       }
       const plan = await verifyCompletedLivePublication(manifest, root);
-      verification = plan.complete
-        ? { state: "verified" }
-        : { state: "partial", operations: plan.operations };
+      verification = plan.complete ? { state: "verified" } : { state: "partial", operations: plan.operations };
     } catch (error) {
       verification = { state: "failed", detail: error instanceof Error ? error.message : String(error) };
     } finally {
@@ -383,6 +389,23 @@ async function status(): Promise<void> {
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
 }
 
+function inspectRelease(repository: string, tag: string): ReturnType<typeof tryExec> {
+  const byTag = tryExec("gh", ["api", `repos/${repository}/releases/tags/${tag}`]);
+  if (byTag.ok || !/HTTP 404|Not Found/iu.test(byTag.stderr)) return byTag;
+  const listed = tryExec("gh", ["api", "--paginate", "--slurp", `repos/${repository}/releases?per_page=100`]);
+  if (!listed.ok) return listed;
+  const pages = parseJSON(listed.stdout, "GitHub Release list");
+  if (!Array.isArray(pages)) return { ok: false, stdout: "", stderr: "GitHub Release list is not paginated JSON" };
+  for (const page of pages) {
+    if (!Array.isArray(page)) continue;
+    for (const value of page) {
+      const release = objectValue(value, "GitHub Release list item");
+      if (release.tag_name === tag) return { ok: true, stdout: JSON.stringify(release), stderr: "" };
+    }
+  }
+  return byTag;
+}
+
 function inspectRemoteTag(
   repository: string,
   manifest: ReturnType<typeof parseReleaseManifest>
@@ -405,7 +428,10 @@ function inspectRemoteTag(
         ? { state: "missing-or-conflicting", detail: tag.stderr.trim() }
         : { state: "unavailable", detail: tag.stderr.trim() };
     }
-    const tagRecord = objectValue(parseJSON(tag.stdout, "remote annotated release tag"), "remote annotated release tag");
+    const tagRecord = objectValue(
+      parseJSON(tag.stdout, "remote annotated release tag"),
+      "remote annotated release tag"
+    );
     const target = objectValue(tagRecord.object, "remote annotated release tag target");
     return target.type === "commit" && target.sha === manifest.release.source_sha
       ? { state: "reserved" }
@@ -438,8 +464,10 @@ function tagState(tag: string, source: string): "absent" | "matching" | "conflic
   const object = runGit(["rev-parse", "--verify", `refs/tags/${tag}`], true);
   if (!object) return "absent";
   const type = runGit(["cat-file", "-t", `refs/tags/${tag}`]);
-  const target = runGit(["rev-parse", `refs/tags/${tag}^{commit}`]);
-  return type === "tag" && target === source ? "matching" : "conflict";
+  if (type !== "tag") return "conflict";
+  const tagObject = runGit(["cat-file", "-p", `refs/tags/${tag}`]);
+  const target = tagObject.match(/^object ([0-9a-f]{40})\ntype ([^\n]+)\n/u);
+  return target?.[2] === "commit" && target[1] === source ? "matching" : "conflict";
 }
 
 function runGit(args: string[], allowFailure = false): string {

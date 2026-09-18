@@ -2,6 +2,8 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { validatePackageImage } from "./package-metadata-validation.mjs";
+
 const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const packageJSON = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
 const packageVersion = process.env.ATLAS_CORE_PACKAGE_VERSION ?? packageJSON.version;
@@ -24,13 +26,7 @@ const protocolRevision = protocolRevisionSource.match(
 if (typeof packageJSON.name !== "string" || typeof packageVersion !== "string") {
   throw new Error("package.json must contain string name and version fields");
 }
-if (
-  packageImage !== null &&
-  (typeof packageImage !== "string" ||
-    !/^ghcr\.io\/the-drunken-coder\/atlas-core@sha256:[0-9a-f]{64}$/.test(packageImage))
-) {
-  throw new Error("package.json atlasCoreImage must be null or an immutable Atlas Core GHCR digest reference");
-}
+validatePackageImage(packageImage, process.env.ATLAS_CORE_ALLOW_TEST_IMAGE === "1");
 if (!protocolRevision) throw new Error("generated Atlas Protocol revision is missing or malformed");
 
 writeFileSync(

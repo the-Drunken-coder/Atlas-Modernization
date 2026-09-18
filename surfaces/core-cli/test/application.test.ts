@@ -2468,6 +2468,31 @@ describe("atlas-core CLI", () => {
     expect(test.runner.installedVersion).toBe(PACKAGE_VERSION);
   });
 
+  it("recognizes its own development deployment state during update checks", async () => {
+    const test = runtime();
+    markInitialized(test);
+    setCoreVersion(test, "0.0.0-dev");
+    test.runner.latestVersion = NEXT_PACKAGE_VERSION;
+    let info:
+      | Awaited<ReturnType<Parameters<NonNullable<InteractiveCLI["runUpdate"]>>[0]["checkForUpdates"]>>
+      | undefined;
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runMenu: async () => undefined,
+      runUpdate: async (operator) => {
+        info = await operator.checkForUpdates();
+      }
+    };
+
+    expect(await runCLI(["update"], test.context)).toBe(0);
+    expect(info).toMatchObject({
+      cliVersion: PACKAGE_VERSION,
+      coreVersion: "0.0.0-dev",
+      latestVersion: NEXT_PACKAGE_VERSION,
+      coreUpdateAvailable: true
+    });
+  });
+
   it("does not accept an admin password as a command argument", async () => {
     const test = runtime();
     expect(await runCLI(["config", "correct-horse-battery-staple"], test.context)).toBe(2);

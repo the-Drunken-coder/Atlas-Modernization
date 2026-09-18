@@ -1,28 +1,73 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import test from "node:test";
 
 import {
-  inspectImage,
-  inspectLivePublication,
-  reconcileLivePublication,
-  verifyCompletedLivePublication,
   type CommandResult,
-  type CommandRunner
+  type CommandRunner,
+  inspectImage,
+  inspectLivePublication as inspectLivePublicationImpl,
+  reconcileLivePublication as reconcileLivePublicationImpl,
+  validateNpmAttestationUrl,
+  verifyCompletedLivePublication as verifyCompletedLivePublicationImpl
 } from "./publication.js";
-import { createManifest, expectedEvidence, type ReleaseManifest } from "./release.js";
+import { createManifest, expectedEvidence, type PublicationPlan, type ReleaseManifest } from "./release.js";
 
 const sha = "a".repeat(40);
 const imageDigest = `sha256:${"d".repeat(64)}`;
+const timings = { deadlineMs: 0, retryMs: 0 };
+
+function reconcileLivePublication(
+  manifest: ReleaseManifest,
+  root: string,
+  runner: ControlledPublicationRunner,
+  publicationTimings = timings
+) {
+  return reconcileLivePublicationImpl(manifest, root, runner, publicationTimings, async () => runner.attestation());
+}
+
+function inspectLivePublication(
+  manifest: ReleaseManifest,
+  root: string,
+  runner: ControlledPublicationRunner,
+  publicationTimings = timings
+) {
+  return inspectLivePublicationImpl(manifest, root, runner, publicationTimings, async () => runner.attestation());
+}
+
+function verifyCompletedLivePublication(
+  manifest: ReleaseManifest,
+  root: string,
+  runner: ControlledPublicationRunner,
+  publicationTimings = timings
+) {
+  return verifyCompletedLivePublicationImpl(manifest, root, runner, publicationTimings, async () =>
+    runner.attestation()
+  );
+}
 
 test("image inspection distinguishes absence from registry and response failures", () => {
   assert.equal(inspectImage(new ImageRunner("missing"), "registry.test/core:1.2.3"), undefined);
   assert.throws(() => inspectImage(new ImageRunner("transport"), "registry.test/core:1.2.3"), /transport/);
   assert.throws(() => inspectImage(new ImageRunner("malformed"), "registry.test/core:1.2.3"), /invalid JSON/);
   assert.equal(inspectImage(new ImageRunner("present"), "registry.test/core:1.2.3"), imageDigest);
+});
+
+test("npm provenance downloads are restricted to the exact registry endpoint", () => {
+  assert.equal(
+    validateNpmAttestationUrl("https://registry.npmjs.org/-/npm/v1/attestations/atlas-core@1.2.3", "1.2.3").href,
+    "https://registry.npmjs.org/-/npm/v1/attestations/atlas-core@1.2.3"
+  );
+  for (const value of [
+    "https://example.invalid/-/npm/v1/attestations/atlas-core@1.2.3",
+    "https://registry.npmjs.org/-/npm/v1/attestations/atlas-core@9.9.9",
+    "https://registry.npmjs.org/-/npm/v1/attestations/atlas-core@1.2.3?redirect=https://example.invalid"
+  ]) {
+    assert.throws(() => validateNpmAttestationUrl(value, "1.2.3"), /unexpected origin or path/);
+  }
 });
 
 test("completed live recovery performs verification without external writes", async () => {
@@ -38,6 +83,21 @@ test("completed live recovery performs verification without external writes", as
     });
     assert.equal(result.complete, true);
     assert.deepEqual(runner.trace, writes);
+  } finally {
+    fixture.remove();
+  }
+});
+
+test("one reconciliation verifies sealed bytes and npm signatures only once", async () => {
+  const fixture = publicationFixture();
+  try {
+    const runner = new ControlledPublicationRunner(fixture.manifest, fixture.root, "github-create", "after");
+    runner.clearFailure();
+    await reconcileLivePublication(fixture.manifest, fixture.root, runner);
+
+    assert.equal(runner.readCounts.get("release-download"), 2);
+    assert.equal(runner.readCounts.get("npm-install"), 1);
+    assert.equal(runner.readCounts.get("npm-audit"), 1);
   } finally {
     fixture.remove();
   }
@@ -79,7 +139,7 @@ test("completed status verification performs every read without external writes"
   }
 });
 
-test("completed verification rejects mutable release metadata and incorrect latest disposition", async () => {
+test("completed verification rejects mutable release metadata and incorrect npm dist-tags", async () => {
   const fixture = publicationFixture();
   try {
     const runner = new ControlledPublicationRunner(fixture.manifest, fixture.root, "github-create", "after");
@@ -91,12 +151,12 @@ test("completed verification rejects mutable release metadata and incorrect late
       /title does not match/
     );
     runner.releaseTitle = undefined;
-    runner.isLatest = false;
+    runner.npmTags.latest = "1.2.2";
     const plan = await verifyCompletedLivePublication(fixture.manifest, fixture.root, runner, {
       deadlineMs: 0,
       retryMs: 0
     });
-    assert.deepEqual(plan.operations, ["publish-github-release"]);
+    assert.deepEqual(plan.operations, ["set-npm-tag"]);
     assert.equal(plan.complete, false);
   } finally {
     fixture.remove();
@@ -107,7 +167,12 @@ test("publication rejects checksum tampering and files outside the manifest cont
   const checksumFixture = publicationFixture();
   try {
     writeFileSync(join(checksumFixture.root, "SHA256SUMS"), `${"0".repeat(64)}  release-manifest.json\n`);
-    const runner = new ControlledPublicationRunner(checksumFixture.manifest, checksumFixture.root, "github-create", "after");
+    const runner = new ControlledPublicationRunner(
+      checksumFixture.manifest,
+      checksumFixture.root,
+      "github-create",
+      "after"
+    );
     await assert.rejects(
       reconcileLivePublication(checksumFixture.manifest, checksumFixture.root, runner, { deadlineMs: 0, retryMs: 0 }),
       /does not describe the exact release bundle/
@@ -137,6 +202,7 @@ for (const failure of [
   "github-seal",
   "image",
   "npm",
+  "npm-tag",
   "github-final"
 ] as const) {
   test(`live adapters stop after a failure before ${failure} and recover without replacing state`, async () => {
@@ -146,8 +212,14 @@ for (const failure of [
       await assert.rejects(
         reconcileLivePublication(fixture.manifest, fixture.root, runner, { deadlineMs: 0, retryMs: 0 })
       );
-      assert.equal(runner.trace.some((entry) => entry === failure), true);
-      assert.equal(runner.trace.some((entry) => laterWrite(failure, entry)), false);
+      assert.equal(
+        runner.trace.some((entry) => entry === failure),
+        true
+      );
+      assert.equal(
+        runner.trace.some((entry) => laterWrite(failure, entry)),
+        false
+      );
       runner.clearFailure();
       const recovered = await reconcileLivePublication(fixture.manifest, fixture.root, runner, {
         deadlineMs: 0,
@@ -166,7 +238,7 @@ for (const failure of [
     const fixture = publicationFixture();
     try {
       const runner = new ControlledPublicationRunner(fixture.manifest, fixture.root, failure, "after");
-      let result;
+      let result: PublicationPlan;
       try {
         result = await reconcileLivePublication(fixture.manifest, fixture.root, runner, {
           deadlineMs: 0,
@@ -200,6 +272,7 @@ type WriteName =
   | "github-seal"
   | "image"
   | "npm"
+  | "npm-tag"
   | "github-final";
 
 class ImageRunner implements CommandRunner {
@@ -217,10 +290,11 @@ class ControlledPublicationRunner implements CommandRunner {
   releaseState: "absent" | "draft" | "sealed" | "published" = "absent";
   image: string | undefined = undefined;
   npm: string | undefined = undefined;
-  isLatest = false;
+  readonly npmTags: { latest?: string; recovered?: string } = {};
   releaseTitle: string | undefined = undefined;
   readonly trace: string[] = [];
   readonly writeCounts = new Map<WriteName, number>();
+  readonly readCounts = new Map<string, number>();
   readonly #manifest: ReleaseManifest;
   readonly #assetRoot: string;
   #failure: WriteName | undefined;
@@ -262,8 +336,8 @@ class ControlledPublicationRunner implements CommandRunner {
         mkdirSync(this.#assetRoot);
       });
     }
-    if (args[0] === "api" && args.at(-1)?.endsWith("/releases/latest")) {
-      return this.isLatest ? success(JSON.stringify({ tag_name: this.#manifest.release.tag_name })) : failure("HTTP 404");
+    if (args[0] === "api" && args.includes("--paginate") && args.at(-1)?.includes("/releases?")) {
+      return success(JSON.stringify(this.releaseState === "absent" ? [[]] : [[this.#releaseDocument()]]));
     }
     if (args[0] === "api" && args.at(-1)?.includes("/releases/tags/")) return this.#releaseResponse();
     if (args[0] === "release" && args[1] === "create") {
@@ -279,6 +353,7 @@ class ControlledPublicationRunner implements CommandRunner {
       });
     }
     if (args[0] === "release" && args[1] === "download") {
+      this.#read("release-download");
       const directory = option(args, "--dir");
       mkdirSync(directory, { recursive: true });
       for (const name of assetNames(this.#assetRoot)) cpSync(join(this.#assetRoot, name), join(directory, name));
@@ -290,12 +365,15 @@ class ControlledPublicationRunner implements CommandRunner {
       });
     }
     if (args[0] === "release" && args[1] === "edit" && args.includes("--prerelease=false")) {
+      if (args.includes("--latest")) return failure("Core publication must not claim repository-wide latest");
       return this.#write("github-final", () => {
         this.releaseState = "published";
-        this.isLatest = args.includes("--latest");
       });
     }
-    if (args[0] === "release" && (args[1] === "verify" || args[1] === "verify-asset")) return success();
+    if (args[0] === "release" && (args[1] === "verify" || args[1] === "verify-asset")) {
+      this.#read(args[1]);
+      return success();
+    }
     if (args[0] === "release" && args[1] === "list") {
       return success(
         JSON.stringify(this.releaseState === "published" ? [{ tagName: this.#manifest.release.tag_name }] : [])
@@ -305,19 +383,22 @@ class ControlledPublicationRunner implements CommandRunner {
   }
 
   #releaseResponse(): CommandResult {
-    if (this.releaseState === "absent") return failure("HTTP 404: Not Found");
+    if (this.releaseState === "absent" || this.releaseState === "draft") return failure("HTTP 404: Not Found");
+    return success(JSON.stringify(this.#releaseDocument()));
+  }
+
+  #releaseDocument(): Record<string, unknown> {
     const notesPath = join(this.#assetRoot, this.#manifest.notes.filename);
-    return success(
-      JSON.stringify({
-        id: 7,
-        draft: this.releaseState === "draft",
-        prerelease: this.releaseState === "sealed",
-        immutable: this.releaseState === "sealed" || this.releaseState === "published",
-        name: this.releaseTitle ?? `Atlas Core ${this.#manifest.release.version}`,
-        body: existsSync(notesPath) ? readFileSync(notesPath, "utf8") : "",
-        assets: assetNames(this.#assetRoot).map((name) => ({ name }))
-      })
-    );
+    return {
+      id: 7,
+      tag_name: this.#manifest.release.tag_name,
+      draft: this.releaseState === "draft",
+      prerelease: this.releaseState === "sealed",
+      immutable: this.releaseState === "sealed" || this.releaseState === "published",
+      name: this.releaseTitle ?? `Atlas Core ${this.#manifest.release.version}`,
+      body: existsSync(notesPath) ? readFileSync(notesPath, "utf8") : "",
+      assets: assetNames(this.#assetRoot).map((name) => ({ name }))
+    };
   }
 
   #docker(args: readonly string[]): CommandResult {
@@ -334,6 +415,9 @@ class ControlledPublicationRunner implements CommandRunner {
   }
 
   #npm(args: readonly string[]): CommandResult {
+    if (args[0] === "view" && args[1] === "atlas-core" && args[2] === "dist-tags") {
+      return success(JSON.stringify(this.npmTags));
+    }
     if (args[0] === "view" && args[1] === "atlas-core" && args[2] === "versions") {
       return success(JSON.stringify(this.npm ? [this.#manifest.release.version] : []));
     }
@@ -346,11 +430,25 @@ class ControlledPublicationRunner implements CommandRunner {
         this.npm = this.#manifest.package.integrity;
       });
     }
-    if (args.includes("init") || args.includes("install") || args.includes("audit")) return success();
+    if (args[0] === "dist-tag" && args[1] === "add") {
+      return this.#write("npm-tag", () => {
+        const tag = args[3];
+        if (tag !== "latest" && tag !== "recovered") throw new Error("missing npm dist-tag");
+        this.npmTags[tag] = this.#manifest.release.version;
+      });
+    }
+    if (args.includes("install")) {
+      this.#read("npm-install");
+      return success();
+    }
+    if (args.includes("audit")) {
+      this.#read("npm-audit");
+      return success();
+    }
     return failure(`unexpected npm command: ${args.join(" ")}`);
   }
 
-  #attestationUrl(): string {
+  attestation(): unknown {
     const statement = {
       subject: [
         {
@@ -382,7 +480,11 @@ class ControlledPublicationRunner implements CommandRunner {
         }
       ]
     };
-    return `data:application/json,${encodeURIComponent(JSON.stringify(bundle))}`;
+    return bundle;
+  }
+
+  #attestationUrl(): string {
+    return `https://registry.npmjs.org/-/npm/v1/attestations/atlas-core@${this.#manifest.release.version}`;
   }
 
   #write(name: WriteName, mutate: () => void): CommandResult {
@@ -396,6 +498,10 @@ class ControlledPublicationRunner implements CommandRunner {
       return failure(`${name} response lost after write`);
     }
     return success();
+  }
+
+  #read(name: string): void {
+    this.readCounts.set(name, (this.readCounts.get(name) ?? 0) + 1);
   }
 }
 
@@ -432,7 +538,12 @@ function publicationFixture(): { root: string; manifest: ReleaseManifest; remove
 
 function writeChecksums(root: string): void {
   const lines = assetNames(root)
-    .map((name) => `${createHash("sha256").update(readFileSync(join(root, name))).digest("hex")}  ${name}`)
+    .map(
+      (name) =>
+        `${createHash("sha256")
+          .update(readFileSync(join(root, name)))
+          .digest("hex")}  ${name}`
+    )
     .join("\n");
   writeFileSync(join(root, "SHA256SUMS"), `${lines}\n`);
 }
@@ -467,6 +578,7 @@ function laterWrite(failure: WriteName, candidate: string): boolean {
     "github-seal",
     "image",
     "npm",
+    "npm-tag",
     "github-final"
   ];
   return order.findIndex((name) => name === candidate) > order.indexOf(failure);

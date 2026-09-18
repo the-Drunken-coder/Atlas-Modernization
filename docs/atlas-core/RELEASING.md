@@ -31,7 +31,7 @@ new version. Never move or replace a release tag, overwrite a published package,
    digest, and acceptance evidence in the run summary.
 6. Approve the `release-publish` environment deployment. The publisher uploads the exact bundle to a draft, publishes
    it as an immutable prerelease, verifies GitHub's release and asset attestations, reconciles GHCR and npm, then marks
-   the same immutable release stable.
+   the same immutable release stable without changing the repository-wide GitHub latest release.
 7. After completion, run **Release Atlas Core** manually from the same tag. A completed release follows the read-only
    verification path and performs no mutation.
 
@@ -90,7 +90,7 @@ performs these operations in order:
 3. Promote the exact GHCR digest to the version tag and verify anonymous access.
 4. Publish the exact tarball through npm trusted publishing when the version is absent.
 5. Verify npm integrity, workflow/source provenance, registry signatures, and attestations with `npm audit signatures`.
-6. Mark the same immutable GitHub Release stable and apply the correct latest-release disposition.
+6. Mark the same immutable GitHub Release stable with GitHub's latest-release flag disabled.
 
 Matching existing state is success. A conflicting tag, image digest, npm package, release manifest, or sealed asset is a
 hard failure. npm metadata and attestations may become visible at different times, so publication verification retries
@@ -98,8 +98,9 @@ temporary transport, rate-limit, and visibility failures for up to 15 minutes. I
 `npm publish` returns an ambiguous response, the workflow inspects registry state and never repeats the publish call in
 that run.
 
-The newest stable release receives npm's `latest` tag and becomes GitHub latest. Recovery of an older version uses the
-`recovered` npm tag and leaves the newer GitHub latest release unchanged.
+The newest stable Core release receives npm's `latest` tag. Recovery of an older version uses the `recovered` npm tag.
+Atlas Core never changes the repository-wide GitHub latest release because Core and Plugin releases share that
+namespace.
 
 ## Cancellation and recovery
 
@@ -115,8 +116,8 @@ node tools/atlas-core-release/dist/cli.js status --version <version>
 
 `status` reports completion only after downloading and validating the immutable bundle, verifying GitHub's release and
 asset attestations, checking the exact GHCR and npm identities, validating npm provenance, and auditing npm signatures.
-The check is point-in-time: GitHub still permits release title, notes, prerelease, and latest metadata to be edited after
-assets become immutable, so every recovery revalidates those fields and restores the intended latest disposition.
+The check is point-in-time: GitHub still permits release title, notes, and prerelease metadata to be edited after assets
+become immutable, so every recovery revalidates those fields. Completed verification never repairs drift.
 
 To recover, manually dispatch **Release Atlas Core** from `atlas-core-v<version>`. Never dispatch it from `main`.
 
@@ -132,8 +133,9 @@ conflicting state is never replaced.
 
 ## Configuration and cutover
 
-The dedicated Atlas Core release GitHub App needs only repository **Contents: read and write**. Record its client ID as
-`ATLAS_CORE_RELEASE_APP_CLIENT_ID` and its private key as the `release-commit` environment secret
+The dedicated Atlas Core release GitHub App needs repository **Contents: read and write** plus **Administration: read**.
+Administration access is used only to verify immutable-release settings and the exact release-tag bypass actors
+immediately before reservation. Record its client ID as `ATLAS_CORE_RELEASE_APP_CLIENT_ID` and its private key as the `release-commit` environment secret
 `ATLAS_CORE_RELEASE_APP_PRIVATE_KEY`. The App token exists only in the isolated tag-creation job. That job does not run
 package or repository scripts, and the App no longer needs a `main` protection bypass.
 
@@ -149,9 +151,10 @@ Configure environments as follows:
 - `release-publish`: allow `atlas-core-v*`, disable administrator bypass, and require the release reviewer. npm trusted
   publishing must continue to identify workflow `release-atlas-core.yml` and environment `release-publish`.
 
-Enable repository **Immutable releases** before the first request. Both workflows fail closed when this setting is off.
-Immutable releases lock the tag and assets when a draft is published; they also provide the signed release attestation
-used by recovery. This setting does not retroactively make historical releases immutable.
+Enable repository **Immutable releases** before the first request. The request rechecks this setting with the release App
+after the CI wait and immediately before creating the tag. Publication accepts only a release that GitHub reports as
+immutable and verifies its signed release attestation. Immutable releases lock the tag and assets when a draft is
+published. This setting does not retroactively make historical releases immutable.
 
 After this replacement is merged and no release is in flight:
 

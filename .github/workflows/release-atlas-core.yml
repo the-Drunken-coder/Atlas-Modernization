@@ -88,13 +88,6 @@ jobs:
           bash .github/scripts/require-atlas-core-tag-rulesets.sh \
             "Both Atlas Core release tag rulesets must remain active."
 
-      - name: Require immutable GitHub Releases
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          node tools/atlas-core-release/dist/cli.js require-immutable-releases \
-            --repository "$GITHUB_REPOSITORY"
-
       - name: Revalidate exact required Core CI
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -895,7 +888,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          node tools/atlas-core-release/dist/cli.js reconcile-publication \
+          node tools/atlas-core-release/dist/cli.js verify-completed-publication \
             --manifest bundle/release-manifest.json \
             --root bundle \
             > "$RUNNER_TEMP/publication-result.json"

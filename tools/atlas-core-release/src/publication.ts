@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
@@ -8,17 +8,17 @@ import {
   AmbiguousWriteError,
   compareVersions,
   npmIntegrity,
+  type ObservedPublication,
   objectValue,
+  type PublicationAdapters,
+  type PublicationPlan,
   parseReleaseManifest,
   planPublication,
+  type ReleaseManifest,
   reconcilePublication,
   stringValue,
   validateManifest,
-  validateNpmAttestation,
-  type ObservedPublication,
-  type PublicationAdapters,
-  type PublicationPlan,
-  type ReleaseManifest
+  validateNpmAttestation
 } from "./release.js";
 
 const DEFAULT_DEADLINE_MS = 15 * 60 * 1000;
@@ -39,6 +39,8 @@ export interface PublicationTimings {
   deadlineMs: number;
   retryMs: number;
 }
+
+export type AttestationFetcher = (url: string) => Promise<unknown>;
 
 export class ProcessCommandRunner implements CommandRunner {
   run(file: string, args: readonly string[], timeoutMs = COMMAND_TIMEOUT_MS): CommandResult {
@@ -61,22 +63,27 @@ export async function reconcileLivePublication(
   manifest: ReleaseManifest,
   bundleRoot: string,
   runner: CommandRunner = new ProcessCommandRunner(),
-  timings: PublicationTimings = { deadlineMs: DEFAULT_DEADLINE_MS, retryMs: DEFAULT_RETRY_MS }
+  timings: PublicationTimings = { deadlineMs: DEFAULT_DEADLINE_MS, retryMs: DEFAULT_RETRY_MS },
+  fetchAttestation: AttestationFetcher = fetchJSON
 ): Promise<PublicationPlan> {
   validateManifest(manifest, bundleRoot);
   validateChecksums(manifest, bundleRoot);
-  return reconcilePublication(manifest, new LivePublicationAdapters(manifest, bundleRoot, runner, timings));
+  return reconcilePublication(
+    manifest,
+    new LivePublicationAdapters(manifest, bundleRoot, runner, timings, true, fetchAttestation)
+  );
 }
 
 export async function inspectLivePublication(
   manifest: ReleaseManifest,
   bundleRoot: string,
   runner: CommandRunner = new ProcessCommandRunner(),
-  timings: PublicationTimings = { deadlineMs: DEFAULT_DEADLINE_MS, retryMs: DEFAULT_RETRY_MS }
+  timings: PublicationTimings = { deadlineMs: DEFAULT_DEADLINE_MS, retryMs: DEFAULT_RETRY_MS },
+  fetchAttestation: AttestationFetcher = fetchJSON
 ): Promise<PublicationPlan> {
   validateManifest(manifest, bundleRoot);
   validateChecksums(manifest, bundleRoot);
-  const adapters = new LivePublicationAdapters(manifest, bundleRoot, runner, timings, false);
+  const adapters = new LivePublicationAdapters(manifest, bundleRoot, runner, timings, false, fetchAttestation);
   return planPublication(manifest, await adapters.inspect());
 }
 
@@ -84,11 +91,12 @@ export async function verifyCompletedLivePublication(
   manifest: ReleaseManifest,
   bundleRoot: string,
   runner: CommandRunner = new ProcessCommandRunner(),
-  timings: PublicationTimings = { deadlineMs: DEFAULT_DEADLINE_MS, retryMs: DEFAULT_RETRY_MS }
+  timings: PublicationTimings = { deadlineMs: DEFAULT_DEADLINE_MS, retryMs: DEFAULT_RETRY_MS },
+  fetchAttestation: AttestationFetcher = fetchJSON
 ): Promise<PublicationPlan> {
   validateManifest(manifest, bundleRoot);
   validateChecksums(manifest, bundleRoot);
-  const adapters = new LivePublicationAdapters(manifest, bundleRoot, runner, timings);
+  const adapters = new LivePublicationAdapters(manifest, bundleRoot, runner, timings, true, fetchAttestation);
   const plan = planPublication(manifest, await adapters.inspect());
   if (plan.complete) await adapters.process.verify();
   return plan;
@@ -100,19 +108,25 @@ export class LivePublicationAdapters implements PublicationAdapters {
   readonly #runner: CommandRunner;
   readonly #timings: PublicationTimings;
   readonly #verifyObservedNpm: boolean;
+  readonly #fetchAttestation: AttestationFetcher;
+  #verifiedReleaseManifest: ReleaseManifest | undefined;
+  #releaseAttestationVerified = false;
+  #npmVerified = false;
 
   constructor(
     manifest: ReleaseManifest,
     bundleRoot: string,
     runner: CommandRunner = new ProcessCommandRunner(),
     timings: PublicationTimings = { deadlineMs: DEFAULT_DEADLINE_MS, retryMs: DEFAULT_RETRY_MS },
-    verifyObservedNpm = true
+    verifyObservedNpm = true,
+    fetchAttestation: AttestationFetcher = fetchJSON
   ) {
     this.#manifest = manifest;
     this.#bundleRoot = bundleRoot;
     this.#runner = runner;
     this.#timings = timings;
     this.#verifyObservedNpm = verifyObservedNpm;
+    this.#fetchAttestation = fetchAttestation;
   }
 
   inspect = async (): Promise<ObservedPublication> => {
@@ -129,11 +143,11 @@ export class LivePublicationAdapters implements PublicationAdapters {
       );
     }
     if (this.#verifyObservedNpm && npmIntegrityValue === this.#manifest.package.integrity) await this.#verifyNpm();
+    const npmTags = await this.#inspectNpmTags();
     const highestPublishedVersion = await this.#highestPublishedVersion();
-    const githubLatest = release.state === "published" ? await this.#isCurrentGitHubLatest() : false;
     const observed: ObservedPublication = {
       githubRelease: release.state,
-      githubLatest,
+      npmTags,
       ...(release.manifest ? { sealedManifest: release.manifest } : {}),
       ...(imageDigest ? { imageDigest } : {}),
       ...(npmIntegrityValue ? { npmIntegrity: npmIntegrityValue } : {}),
@@ -144,13 +158,15 @@ export class LivePublicationAdapters implements PublicationAdapters {
 
   github = {
     seal: async (): Promise<void> => this.#seal(),
-    publish: async (_manifest: ReleaseManifest, latest: boolean): Promise<void> => this.#publish(latest)
+    publish: async (): Promise<void> => this.#publish()
   };
 
   registry = {
     promoteImage: async (): Promise<void> => this.#promoteImage(),
     publishPackage: async (_manifest: ReleaseManifest, tag: "latest" | "recovered"): Promise<void> =>
-      this.#publishPackage(tag)
+      this.#publishPackage(tag),
+    setPackageTag: async (_manifest: ReleaseManifest, tag: "latest" | "recovered"): Promise<void> =>
+      this.#setPackageTag(tag)
   };
 
   process = {
@@ -161,15 +177,8 @@ export class LivePublicationAdapters implements PublicationAdapters {
     state: "absent" | "draft" | "sealed" | "published";
     manifest?: ReleaseManifest;
   }> {
-    const response = this.#runner.run("gh", [
-      "api",
-      `repos/${this.#manifest.release.repository}/releases/tags/${this.#manifest.release.tag_name}`
-    ]);
-    if (response.status !== 0) {
-      if (isGitHubNotFound(response)) return { state: "absent" };
-      throw commandError("inspect GitHub Release", response);
-    }
-    const release = objectValue(parseJson(response.stdout, "GitHub Release"), "GitHub Release");
+    const release = await retryInspection(() => this.#findRelease(), this.#timings, "GitHub Release inspection");
+    if (!release) return { state: "absent" };
     const draft = booleanValue(release.draft, "GitHub Release draft state");
     if (draft) return { state: "draft" };
     if (release.immutable !== true) {
@@ -184,34 +193,61 @@ export class LivePublicationAdapters implements PublicationAdapters {
       throw new Error("GitHub Release notes do not match the immutable release-notes asset");
     }
     const prerelease = booleanValue(release.prerelease, "GitHub Release prerelease state");
-    const manifest = this.#downloadAndVerifyRelease();
-    await this.#verifyReleaseAttestation();
+    const manifest = this.#verifiedReleaseManifest ?? this.#downloadAndVerifyRelease();
+    this.#verifiedReleaseManifest = manifest;
+    if (!this.#releaseAttestationVerified) {
+      await this.#verifyReleaseAttestation();
+      this.#releaseAttestationVerified = true;
+    }
     return { state: prerelease ? "sealed" : "published", manifest };
   }
 
-  async #seal(): Promise<void> {
-    this.#requireImmutableReleases();
-    const current = this.#runner.run("gh", [
+  #findRelease(): Record<string, unknown> | undefined {
+    const byTag = this.#runner.run("gh", [
       "api",
       `repos/${this.#manifest.release.repository}/releases/tags/${this.#manifest.release.tag_name}`
     ]);
-    if (current.status === 0) {
-      const release = objectValue(parseJson(current.stdout, "GitHub Release"), "GitHub Release");
+    if (byTag.status === 0) return objectValue(parseJson(byTag.stdout, "GitHub Release"), "GitHub Release");
+    if (!isGitHubNotFound(byTag)) throw commandError("inspect GitHub Release", byTag);
+
+    const all = this.#runner.run("gh", [
+      "api",
+      "--paginate",
+      "--slurp",
+      `repos/${this.#manifest.release.repository}/releases?per_page=100`
+    ]);
+    requireSuccess("inspect draft GitHub Releases", all);
+    const pages = arrayValue(parseJson(all.stdout, "GitHub Release list"), "GitHub Release list");
+    for (const [pageIndex, page] of pages.entries()) {
+      for (const [releaseIndex, value] of arrayValue(page, `GitHub Release page ${pageIndex}`).entries()) {
+        const release = objectValue(value, `GitHub Release ${pageIndex}:${releaseIndex}`);
+        if (release.tag_name === this.#manifest.release.tag_name) return release;
+      }
+    }
+    return undefined;
+  }
+
+  async #seal(): Promise<void> {
+    const release = this.#findRelease();
+    if (release) {
       if (release.draft !== true) {
         throw new AmbiguousWriteError("The GitHub Release may already have been sealed");
       }
       const id = integerValue(release.id, "GitHub Release ID");
       requireSuccess(
         "delete unsealed draft GitHub Release",
-        this.#runner.run("gh", ["api", "--method", "DELETE", `repos/${this.#manifest.release.repository}/releases/${id}`])
+        this.#runner.run("gh", [
+          "api",
+          "--method",
+          "DELETE",
+          `repos/${this.#manifest.release.repository}/releases/${id}`
+        ])
       );
       this.#createDraft();
       this.#uploadBundle();
-    } else if (isGitHubNotFound(current)) {
+    } else {
       this.#createDraft();
       this.#uploadBundle();
-    } else {
-      throw commandError("inspect draft GitHub Release", current);
     }
     this.#assertReleaseBytesMatch();
     const publish = this.#runner.run("gh", [
@@ -363,16 +399,6 @@ export class LivePublicationAdapters implements PublicationAdapters {
     }
   }
 
-  #requireImmutableReleases(): void {
-    const response = this.#runner.run("gh", [
-      "api",
-      `repos/${this.#manifest.release.repository}/immutable-releases`
-    ]);
-    requireSuccess("inspect GitHub immutable releases setting", response);
-    const setting = objectValue(parseJson(response.stdout, "GitHub immutable releases setting"), "immutable releases");
-    if (setting.enabled !== true) throw new Error("GitHub immutable releases must be enabled before publication");
-  }
-
   async #promoteImage(): Promise<void> {
     const source = `${this.#manifest.image.repository}@${this.#manifest.image.digest}`;
     const target = `${this.#manifest.image.repository}:${this.#manifest.release.version}`;
@@ -422,6 +448,33 @@ export class LivePublicationAdapters implements PublicationAdapters {
     if (integrity !== this.#manifest.package.integrity) throw new Error("npm package integrity did not converge");
   }
 
+  async #inspectNpmTags(): Promise<{ latest?: string; recovered?: string }> {
+    return retryInspection(
+      () => {
+        const result = this.#runner.run("npm", ["view", "atlas-core", "dist-tags", "--json"]);
+        requireSuccess("inspect npm dist-tags", result);
+        const tags = objectValue(parseJson(result.stdout, "npm dist-tags"), "npm dist-tags");
+        return {
+          ...(typeof tags.latest === "string" ? { latest: tags.latest } : {}),
+          ...(typeof tags.recovered === "string" ? { recovered: tags.recovered } : {})
+        };
+      },
+      this.#timings,
+      "npm dist-tag inspection"
+    );
+  }
+
+  async #setPackageTag(tag: "latest" | "recovered"): Promise<void> {
+    const result = this.#runner.run("npm", ["dist-tag", "add", `atlas-core@${this.#manifest.release.version}`, tag]);
+    if (result.status !== 0) throw new AmbiguousWriteError(commandError(`set npm ${tag} tag`, result).message);
+    await waitForValue(
+      () => this.#inspectNpmTags(),
+      (tags) => tags[tag] === this.#manifest.release.version,
+      this.#timings,
+      `npm ${tag} tag for atlas-core@${this.#manifest.release.version}`
+    );
+  }
+
   async #highestPublishedVersion(): Promise<string | undefined> {
     const npm = await retryInspection(
       () => {
@@ -465,34 +518,18 @@ export class LivePublicationAdapters implements PublicationAdapters {
       .at(-1);
   }
 
-  async #isCurrentGitHubLatest(): Promise<boolean> {
-    return retryInspection(
-      () => {
-        const result = this.#runner.run("gh", [
-          "api",
-          `repos/${this.#manifest.release.repository}/releases/latest`
-        ]);
-        if (isGitHubNotFound(result)) return false;
-        requireSuccess("inspect latest GitHub Release", result);
-        const release = objectValue(parseJson(result.stdout, "latest GitHub Release"), "latest GitHub Release");
-        return stringValue(release.tag_name, "latest GitHub Release tag") === this.#manifest.release.tag_name;
-      },
-      this.#timings,
-      "latest GitHub Release inspection"
-    );
-  }
-
-  async #publish(latest: boolean): Promise<void> {
+  async #publish(): Promise<void> {
     const result = this.#runner.run("gh", [
       "release",
       "edit",
       this.#manifest.release.tag_name,
       "--prerelease=false",
-      latest ? "--latest" : "--latest=false",
+      "--latest=false",
       "--repo",
       this.#manifest.release.repository
     ]);
-    if (result.status !== 0) throw new AmbiguousWriteError(commandError("publish final GitHub Release", result).message);
+    if (result.status !== 0)
+      throw new AmbiguousWriteError(commandError("publish final GitHub Release", result).message);
     await waitForValue(
       () => this.#inspectRelease(),
       (release) => release.state === "published",
@@ -505,10 +542,13 @@ export class LivePublicationAdapters implements PublicationAdapters {
     const release = await this.#inspectRelease();
     if (release.state !== "published") throw new Error("GitHub Release is not in its final published state");
     const highestPublishedVersion = await this.#highestPublishedVersion();
-    const shouldBeLatest =
-      !highestPublishedVersion || compareVersions(this.#manifest.release.version, highestPublishedVersion) >= 0;
-    if ((await this.#isCurrentGitHubLatest()) !== shouldBeLatest) {
-      throw new Error("GitHub latest release does not match the version ordering policy");
+    const expectedNpmTag =
+      !highestPublishedVersion || compareVersions(this.#manifest.release.version, highestPublishedVersion) >= 0
+        ? "latest"
+        : "recovered";
+    const npmTags = await this.#inspectNpmTags();
+    if (npmTags[expectedNpmTag] !== this.#manifest.release.version) {
+      throw new Error(`npm ${expectedNpmTag} does not identify Atlas Core ${this.#manifest.release.version}`);
     }
     const imageDigest = await inspectImageWithRetry(
       this.#runner,
@@ -540,6 +580,7 @@ export class LivePublicationAdapters implements PublicationAdapters {
   }
 
   async #verifyNpm(): Promise<void> {
+    if (this.#npmVerified) return;
     const integrity = await waitForValue(
       () => this.#inspectNpmIntegrity(),
       (value) => value === this.#manifest.package.integrity,
@@ -562,13 +603,9 @@ export class LivePublicationAdapters implements PublicationAdapters {
       "npm provenance URL"
     );
     if (!attestationUrl) throw new Error("npm provenance URL did not become visible");
+    validateNpmAttestationUrl(attestationUrl, this.#manifest.release.version);
     const attestation = await waitForValue(
-      async () => {
-        const response = await fetch(attestationUrl, { signal: AbortSignal.timeout(30_000) });
-        if (!response.ok) throw new Error(`npm provenance returned HTTP ${response.status}`);
-        const value: unknown = await response.json();
-        return value;
-      },
+      () => this.#fetchAttestation(attestationUrl),
       (value) => value !== undefined,
       this.#timings,
       "npm provenance document"
@@ -605,6 +642,7 @@ export class LivePublicationAdapters implements PublicationAdapters {
     } finally {
       rmSync(consumer, { recursive: true, force: true });
     }
+    this.#npmVerified = true;
   }
 
   #bundleNames(): string[] {
@@ -616,16 +654,12 @@ export class LivePublicationAdapters implements PublicationAdapters {
 }
 
 export function inspectImage(runner: CommandRunner, reference: string): string | undefined {
-  const result = runner.run("docker", [
-    "buildx",
-    "imagetools",
-    "inspect",
-    reference,
-    "--format",
-    "{{json .Manifest}}"
-  ]);
+  const result = runner.run("docker", ["buildx", "imagetools", "inspect", reference, "--format", "{{json .Manifest}}"]);
   if (result.status === 0) {
-    const manifest = objectValue(parseJson(result.stdout, `image manifest ${reference}`), `image manifest ${reference}`);
+    const manifest = objectValue(
+      parseJson(result.stdout, `image manifest ${reference}`),
+      `image manifest ${reference}`
+    );
     const digest = stringValue(manifest.digest, `image manifest digest for ${reference}`);
     if (!/^sha256:[0-9a-f]{64}$/u.test(digest)) throw new Error(`Image ${reference} returned an invalid digest`);
     return digest;
@@ -636,6 +670,31 @@ export function inspectImage(runner: CommandRunner, reference: string): string |
   throw commandError(`inspect image ${reference}`, result);
 }
 
+export function validateNpmAttestationUrl(value: string, version: string): URL {
+  const url = new URL(value);
+  const expectedPath = `/-/npm/v1/attestations/atlas-core@${version}`;
+  if (
+    url.protocol !== "https:" ||
+    url.hostname !== "registry.npmjs.org" ||
+    url.port !== "" ||
+    url.username !== "" ||
+    url.password !== "" ||
+    url.pathname !== expectedPath ||
+    url.search !== "" ||
+    url.hash !== ""
+  ) {
+    throw new Error(`npm provenance URL has an unexpected origin or path: ${value}`);
+  }
+  return url;
+}
+
+async function fetchJSON(url: string): Promise<unknown> {
+  const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+  if (!response.ok) throw new Error(`npm provenance returned HTTP ${response.status}`);
+  const value: unknown = await response.json();
+  return value;
+}
+
 export async function promoteExactImage(
   runner: CommandRunner,
   source: string,
@@ -643,9 +702,11 @@ export async function promoteExactImage(
   expectedDigest: string,
   timings: PublicationTimings = { deadlineMs: DEFAULT_DEADLINE_MS, retryMs: DEFAULT_RETRY_MS }
 ): Promise<void> {
-  if (!/^sha256:[0-9a-f]{64}$/u.test(expectedDigest)) throw new Error(`Invalid expected image digest: ${expectedDigest}`);
+  if (!/^sha256:[0-9a-f]{64}$/u.test(expectedDigest))
+    throw new Error(`Invalid expected image digest: ${expectedDigest}`);
   const existing = await inspectImageWithRetry(runner, target, timings);
-  if (existing && existing !== expectedDigest) throw new Error(`${target} already resolves to conflicting digest ${existing}`);
+  if (existing && existing !== expectedDigest)
+    throw new Error(`${target} already resolves to conflicting digest ${existing}`);
   if (existing === expectedDigest) return;
   const result = runner.run("docker", ["buildx", "imagetools", "create", "--tag", target, source], timings.deadlineMs);
   if (result.status !== 0) throw new AmbiguousWriteError(commandError("promote image", result).message);
@@ -667,11 +728,7 @@ async function inspectImageWithRetry(
   return retryInspection(() => inspectImage(runner, reference), timings, `image inspection for ${reference}`);
 }
 
-async function retryInspection<T>(
-  inspect: () => T,
-  timings: PublicationTimings,
-  label: string
-): Promise<T> {
+async function retryInspection<T>(inspect: () => T, timings: PublicationTimings, label: string): Promise<T> {
   const deadline = Date.now() + timings.deadlineMs;
   let lastError: unknown;
   for (;;) {
@@ -732,7 +789,8 @@ async function waitForValue<T>(
 function assertSameBundle(expectedRoot: string, actualRoot: string): void {
   const expected = fileNames(expectedRoot);
   const actual = fileNames(actualRoot);
-  if (expected.join("\n") !== actual.join("\n")) throw new Error("GitHub Release asset set does not match candidate bundle");
+  if (expected.join("\n") !== actual.join("\n"))
+    throw new Error("GitHub Release asset set does not match candidate bundle");
   for (const name of expected) {
     if (npmIntegrity(join(expectedRoot, name)) !== npmIntegrity(join(actualRoot, name))) {
       throw new Error(`GitHub Release asset ${name} does not match the approved candidate`);
@@ -766,7 +824,9 @@ function validateChecksums(manifest: ReleaseManifest, root: string): void {
     throw new Error("SHA256SUMS does not describe the exact release bundle");
   }
   for (const [name, expected] of recorded) {
-    const actual = createHash("sha256").update(readFileSync(join(root, name))).digest("hex");
+    const actual = createHash("sha256")
+      .update(readFileSync(join(root, name)))
+      .digest("hex");
     if (actual !== expected) throw new Error(`SHA256SUMS mismatch for ${name}`);
   }
 }

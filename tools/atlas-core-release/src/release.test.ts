@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   AmbiguousWriteError,
@@ -13,17 +13,17 @@ import {
   createManifest,
   evaluateWorkflow,
   expectedPlatforms,
+  type ObservedPublication,
+  type PublicationOperation,
   planPublication,
+  type ReleaseManifest,
   reconcilePublication,
   requireUnreservedVersion,
   validateManifest,
-  validateNpmAttestation,
   validateNotes,
+  validateNpmAttestation,
   validateTagRulesets,
   validateVersion,
-  type ObservedPublication,
-  type PublicationOperation,
-  type ReleaseManifest,
   type WorkflowJob,
   type WorkflowRun
 } from "./release.js";
@@ -49,16 +49,27 @@ test("requires split creation and immutability tag rules", () => {
     enforcement: "active",
     conditions: { ref_name: { include: ["refs/tags/atlas-core-v*"], exclude: [] } }
   };
-  const creation = { ...base, name: "Atlas Core release tag creation", rules: [{ type: "creation" }] };
+  const creation = {
+    ...base,
+    name: "Atlas Core release tag creation",
+    rules: [{ type: "creation" }],
+    bypass_actors: [{ actor_id: 42, actor_type: "Integration", bypass_mode: "always" }]
+  };
   const immutability = {
     ...base,
     name: "Atlas Core release tag immutability",
-    rules: [{ type: "update" }, { type: "deletion" }]
+    rules: [{ type: "update" }, { type: "deletion" }],
+    bypass_actors: []
   };
-  assert.doesNotThrow(() => validateTagRulesets(creation, immutability));
+  assert.doesNotThrow(() => validateTagRulesets(creation, immutability, 42));
   assert.throws(
-    () => validateTagRulesets({ ...creation, rules: [{ type: "creation" }, { type: "update" }] }, immutability),
+    () => validateTagRulesets({ ...creation, rules: [{ type: "creation" }, { type: "update" }] }, immutability, 42),
     /must not include update/
+  );
+  assert.throws(() => validateTagRulesets(creation, immutability, 99), /intended release App/);
+  assert.throws(
+    () => validateTagRulesets(creation, { ...immutability, bypass_actors: creation.bypass_actors }, 42),
+    /must not allow bypass actors/
   );
 });
 
@@ -90,12 +101,7 @@ test("missing, failed, canceled, skipped, and duplicate CI jobs block reservatio
   assert.equal(missing.state, "blocked");
   const duplicate = evaluateWorkflow(requirement, shaA, [run()], new Map([[1, [job("core"), job("core")]]]));
   assert.equal(duplicate.state, "blocked");
-  const canceledJob = evaluateWorkflow(
-    requirement,
-    shaA,
-    [run()],
-    new Map([[1, [job("core", "cancelled")]]])
-  );
+  const canceledJob = evaluateWorkflow(requirement, shaA, [run()], new Map([[1, [job("core", "cancelled")]]]));
   assert.equal(canceledJob.state, "blocked");
 });
 
@@ -198,26 +204,19 @@ test("command interface verifies sealed bytes and plans read-only completion", (
         sealedManifest: fixture.manifest,
         imageDigest: fixture.manifest.image.digest,
         npmIntegrity: fixture.manifest.package.integrity,
+        npmTags: { latest: fixture.manifest.release.version },
         githubRelease: "published",
-        githubLatest: true,
         highestPublishedVersion: fixture.manifest.release.version
       })}\n`
     );
-    assert.equal(
-      runCLI(["verify-bundle", "--manifest", manifestPath, "--root", fixture.root], fixture.root).status,
-      0
-    );
+    assert.equal(runCLI(["verify-bundle", "--manifest", manifestPath, "--root", fixture.root], fixture.root).status, 0);
     const plan = JSON.parse(
       runCLI(["plan-publication", "--manifest", manifestPath, "--observed", observedPath], fixture.root).stdout
     ) as { complete?: unknown; operations?: unknown[] };
     assert.equal(plan.complete, true);
     assert.deepEqual(plan.operations, []);
     writeFileSync(fixture.notesPath, "tampered\n");
-    const tampered = runCLI(
-      ["verify-bundle", "--manifest", manifestPath, "--root", fixture.root],
-      fixture.root,
-      false
-    );
+    const tampered = runCLI(["verify-bundle", "--manifest", manifestPath, "--root", fixture.root], fixture.root, false);
     assert.notEqual(tampered.status, 0);
     assert.match(tampered.stderr, /SHA-256/);
   } finally {
@@ -245,8 +244,10 @@ test("publication reconciliation is idempotent after every external write and lo
 
     // This is the state after npm accepted the package but the publish response was lost.
     observed = { ...observed, npmIntegrity: manifest.package.integrity };
-    assert.deepEqual(planPublication(manifest, observed).operations, expected.slice(3));
-    observed = { ...observed, githubRelease: "published", githubLatest: true };
+    assert.deepEqual(planPublication(manifest, observed).operations, ["set-npm-tag", "publish-github-release"]);
+    observed = { ...observed, npmTags: { latest: manifest.release.version } };
+    assert.deepEqual(planPublication(manifest, observed).operations, ["publish-github-release"]);
+    observed = { ...observed, githubRelease: "published" };
     assert.deepEqual(planPublication(manifest, observed).operations, []);
     assert.equal(planPublication(manifest, observed).complete, true);
   } finally {
@@ -270,9 +271,10 @@ test("GitHub, registry, and process adapters converge when successful write resp
         observed.imageDigest = manifest.image.digest;
       } else if (operation === "publish-npm") {
         observed.npmIntegrity = manifest.package.integrity;
+      } else if (operation === "set-npm-tag") {
+        observed.npmTags = { latest: manifest.release.version };
       } else {
         observed.githubRelease = "published";
-        observed.githubLatest = true;
       }
       throw new AmbiguousWriteError(`${operation} response lost`);
     };
@@ -284,7 +286,8 @@ test("GitHub, registry, and process adapters converge when successful write resp
       },
       registry: {
         promoteImage: async () => write("promote-image"),
-        publishPackage: async () => write("publish-npm")
+        publishPackage: async () => write("publish-npm"),
+        setPackageTag: async () => write("set-npm-tag")
       },
       process: {
         verify: async () => {
@@ -293,7 +296,13 @@ test("GitHub, registry, and process adapters converge when successful write resp
       }
     });
     assert.equal(result.complete, true);
-    assert.deepEqual(writes, ["seal-github-release", "promote-image", "publish-npm", "publish-github-release"]);
+    assert.deepEqual(writes, [
+      "seal-github-release",
+      "promote-image",
+      "publish-npm",
+      "set-npm-tag",
+      "publish-github-release"
+    ]);
     assert.equal(verifications, 1);
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
@@ -314,6 +323,7 @@ test("registry visibility lag remains a missing operation without replacing exis
       sealedManifest: manifest,
       imageDigest: manifest.image.digest,
       npmIntegrity: manifest.package.integrity,
+      npmTags: { latest: manifest.release.version },
       githubRelease: "sealed"
     });
     assert.deepEqual(beforeAttestation.operations, ["publish-github-release"]);
@@ -322,7 +332,7 @@ test("registry visibility lag remains a missing operation without replacing exis
   }
 });
 
-test("old-version recovery preserves newer latest state", () => {
+test("old-version recovery preserves newer npm latest state", () => {
   const fixture = manifestFixture();
   try {
     const plan = planPublication(fixture.manifest, {
@@ -331,13 +341,13 @@ test("old-version recovery preserves newer latest state", () => {
       highestPublishedVersion: "9.0.0"
     });
     assert.equal(plan.npmTag, "recovered");
-    assert.equal(plan.githubLatest, false);
+    assert.deepEqual(plan.operations, ["promote-image", "publish-npm", "publish-github-release"]);
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
   }
 });
 
-test("premature final releases fail closed and incorrect latest state is reconciled", () => {
+test("premature final releases fail closed and GitHub latest state is not owned", () => {
   const fixture = manifestFixture();
   try {
     assert.throws(
@@ -345,7 +355,7 @@ test("premature final releases fail closed and incorrect latest state is reconci
         planPublication(fixture.manifest, {
           sealedManifest: fixture.manifest,
           githubRelease: "published",
-          githubLatest: true
+          npmTags: { latest: fixture.manifest.release.version }
         }),
       /published before its image and npm package were complete/
     );
@@ -353,11 +363,11 @@ test("premature final releases fail closed and incorrect latest state is reconci
       sealedManifest: fixture.manifest,
       imageDigest: fixture.manifest.image.digest,
       npmIntegrity: fixture.manifest.package.integrity,
+      npmTags: { latest: fixture.manifest.release.version },
       githubRelease: "published",
-      githubLatest: false,
       highestPublishedVersion: fixture.manifest.release.version
     };
-    assert.deepEqual(planPublication(fixture.manifest, completeButNotLatest).operations, ["publish-github-release"]);
+    assert.deepEqual(planPublication(fixture.manifest, completeButNotLatest).operations, []);
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
   }
@@ -386,10 +396,11 @@ test("cancellation after npm reports an accurate partial state and repeated comp
       sealedManifest: fixture.manifest,
       imageDigest: fixture.manifest.image.digest,
       npmIntegrity: fixture.manifest.package.integrity,
+      npmTags: { latest: fixture.manifest.release.version },
       githubRelease: "sealed"
     };
     assert.deepEqual(planPublication(fixture.manifest, partial).operations, ["publish-github-release"]);
-    const complete = { ...partial, githubRelease: "published" as const, githubLatest: true };
+    const complete = { ...partial, githubRelease: "published" as const };
     assert.deepEqual(planPublication(fixture.manifest, complete).operations, []);
     assert.deepEqual(planPublication(fixture.manifest, complete).operations, []);
   } finally {
@@ -444,13 +455,59 @@ test("conflicting and lightweight release tags are rejected", () => {
     const candidate = git(["rev-parse", "HEAD"], checkout);
     git(["tag", "atlas-core-v1.2.3"], checkout);
     git(["push", "origin", "main", "refs/tags/atlas-core-v1.2.3"], checkout);
-    const result = runCLI(
-      ["validate-reservation", "--version", "1.2.3", "--source-sha", candidate],
-      checkout,
-      false
-    );
+    const result = runCLI(["validate-reservation", "--version", "1.2.3", "--source-sha", candidate], checkout, false);
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /lightweight/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("nested annotated release tags are rejected", () => {
+  const root = mkdtempSync(join(tmpdir(), "atlas-core-release-nested-tag-"));
+  try {
+    git(["init", "--initial-branch=main"], root);
+    git(["config", "user.name", "Release test"], root);
+    git(["config", "user.email", "release@example.invalid"], root);
+    addReleaseContract(root);
+    git(["add", "."], root);
+    git(["commit", "-m", "candidate"], root);
+    const candidate = git(["rev-parse", "HEAD"], root);
+    git(["tag", "--annotate", "inner", candidate, "--message", "inner"], root);
+    git(["tag", "--annotate", "atlas-core-v1.2.3", "inner", "--message", "outer"], root);
+
+    const result = runCLI(["validate-release-tag", "--version", "1.2.3", "--source-sha", candidate], root, false);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /not an annotated tag/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("package preparation updates both the workspace manifest and lock entry", () => {
+  const root = mkdtempSync(join(tmpdir(), "atlas-core-package-tree-"));
+  const workspace = join(root, "surfaces/core-cli");
+  try {
+    mkdirSync(workspace, { recursive: true });
+    writeFileSync(
+      join(workspace, "package.json"),
+      '{"name":"atlas-core","version":"0.0.0-dev","atlasCoreImage":null}\n'
+    );
+    writeFileSync(
+      join(root, "package-lock.json"),
+      `${JSON.stringify({ packages: { "surfaces/core-cli": { name: "atlas-core", version: "0.0.0-dev" } } })}\n`
+    );
+    const image = `ghcr.io/the-drunken-coder/atlas-core@sha256:${"d".repeat(64)}`;
+
+    runCLI(["prepare-package", "--root", root, "--version", "1.2.3", "--image", image], root);
+
+    const packageJSON = JSON.parse(readFileSync(join(workspace, "package.json"), "utf8")) as Record<string, unknown>;
+    const packageLock = JSON.parse(readFileSync(join(root, "package-lock.json"), "utf8")) as {
+      packages: Record<string, { version?: string }>;
+    };
+    assert.equal(packageJSON.version, "1.2.3");
+    assert.equal(packageJSON.atlasCoreImage, image);
+    assert.equal(packageLock.packages["surfaces/core-cli"]?.version, "1.2.3");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

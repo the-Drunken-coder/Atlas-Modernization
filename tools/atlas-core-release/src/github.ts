@@ -1,26 +1,48 @@
 import type { Eligibility, RequiredWorkflow, WorkflowJob, WorkflowRun } from "./release.js";
 import { evaluateWorkflow, objectValue, requiredWorkflows, stringValue } from "./release.js";
 
+interface GitHubClientDependencies {
+  fetch(input: string, init: RequestInit): Promise<Response>;
+  now(): number;
+  sleep(milliseconds: number): Promise<void>;
+}
+
+class TransientGitHubError extends Error {}
+
+const defaultDependencies: GitHubClientDependencies = {
+  fetch: async (input, init) => fetch(input, init),
+  now: () => Date.now(),
+  sleep: async (milliseconds) => await new Promise((resolve) => setTimeout(resolve, milliseconds))
+};
+
 export class GitHubClient {
   readonly #repository: string;
   readonly #token: string;
   readonly #apiRoot: string;
+  readonly #dependencies: GitHubClientDependencies;
 
-  constructor(repository: string, token: string, apiRoot = "https://api.github.com") {
+  constructor(
+    repository: string,
+    token: string,
+    apiRoot = "https://api.github.com",
+    dependencies: GitHubClientDependencies = defaultDependencies
+  ) {
     if (!/^[^/]+\/[^/]+$/u.test(repository)) throw new Error(`Invalid GitHub repository: ${repository}`);
     if (!token) throw new Error("A GitHub token is required");
     this.#repository = repository;
     this.#token = token;
     this.#apiRoot = apiRoot;
+    this.#dependencies = dependencies;
   }
 
   async eligibility(requirement: RequiredWorkflow, sourceSha: string): Promise<Eligibility> {
+    if (!/^[0-9a-f]{40}$/u.test(sourceSha)) throw new Error(`Invalid source SHA: ${sourceSha}`);
     const workflowFile = requirement.path.split("/").at(-1);
     if (!workflowFile) throw new Error(`Invalid workflow path: ${requirement.path}`);
     const workflow = encodeURIComponent(workflowFile);
     const response = objectValue(
       await this.#get(
-      `/repos/${this.#repository}/actions/workflows/${workflow}/runs?event=push&head_sha=${sourceSha}&per_page=20`
+        `/repos/${this.#repository}/actions/workflows/${workflow}/runs?event=push&head_sha=${encodeURIComponent(sourceSha)}&per_page=20`
       ),
       "GitHub workflow runs response"
     );
@@ -44,17 +66,25 @@ export class GitHubClient {
   }
 
   async waitForRequiredCI(sourceSha: string, timeoutMs: number): Promise<Eligibility[]> {
-    const deadline = Date.now() + timeoutMs;
+    if (!/^[0-9a-f]{40}$/u.test(sourceSha)) throw new Error(`Invalid source SHA: ${sourceSha}`);
+    const deadline = this.#dependencies.now() + timeoutMs;
     for (;;) {
-      const results = await Promise.all(requiredWorkflows.map((workflow) => this.eligibility(workflow, sourceSha)));
+      let results: Eligibility[];
+      try {
+        results = await Promise.all(requiredWorkflows.map((workflow) => this.eligibility(workflow, sourceSha)));
+      } catch (error) {
+        if (!(error instanceof TransientGitHubError) || this.#dependencies.now() >= deadline) throw error;
+        await this.#dependencies.sleep(Math.min(15_000, Math.max(0, deadline - this.#dependencies.now())));
+        continue;
+      }
       const blocked = results.find((result) => result.state === "blocked");
       if (blocked) throw new Error(blocked.reason);
       if (results.every((result) => result.state === "success")) return results;
-      if (Date.now() >= deadline) {
+      if (this.#dependencies.now() >= deadline) {
         const pending = results.filter((result) => result.state === "pending").map((result) => result.reason);
         throw new Error(`Required Core CI did not complete before the deadline:\n${pending.join("\n")}`);
       }
-      await new Promise((resolve) => setTimeout(resolve, Math.min(15_000, Math.max(0, deadline - Date.now()))));
+      await this.#dependencies.sleep(Math.min(15_000, Math.max(0, deadline - this.#dependencies.now())));
     }
   }
 
@@ -69,15 +99,33 @@ export class GitHubClient {
   }
 
   async #get(path: string): Promise<unknown> {
-    const response = await fetch(`${this.#apiRoot}${path}`, {
-      headers: {
-        Accept: "application/vnd.github+json",
-        Authorization: `Bearer ${this.#token}`,
-        "X-GitHub-Api-Version": "2022-11-28"
-      },
-      signal: AbortSignal.timeout(30_000)
-    });
-    if (!response.ok) throw new Error(`GitHub API ${response.status} for ${path}: ${await response.text()}`);
+    let response: Response;
+    try {
+      response = await this.#dependencies.fetch(`${this.#apiRoot}${path}`, {
+        headers: {
+          Accept: "application/vnd.github+json",
+          Authorization: `Bearer ${this.#token}`,
+          "X-GitHub-Api-Version": "2022-11-28"
+        },
+        signal: AbortSignal.timeout(30_000)
+      });
+    } catch (error) {
+      throw new TransientGitHubError(
+        `GitHub API transport failure for ${path}: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+    if (!response.ok) {
+      const detail = await response.text();
+      const message = `GitHub API ${response.status} for ${path}: ${detail}`;
+      if (
+        [408, 429, 500, 502, 503, 504].includes(response.status) ||
+        (response.status === 403 &&
+          (response.headers.get("x-ratelimit-remaining") === "0" || /secondary rate limit/iu.test(detail)))
+      ) {
+        throw new TransientGitHubError(message);
+      }
+      throw new Error(message);
+    }
     return await response.json();
   }
 }

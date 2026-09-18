@@ -6278,8 +6278,8 @@ function resolveInstalledCLI(packageDirectory: string): string {
 }
 
 function validateVersion(version: string, source: string): void {
-  const developmentCLI = source === "installed CLI" && version === "0.0.0-dev";
-  if (!developmentCLI && !/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/u.test(version)) {
+  const developmentVersion = (source === "installed CLI" || source === "running Atlas Core") && version === "0.0.0-dev";
+  if (!developmentVersion && !/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/u.test(version)) {
     throw new Error(`${source} has an invalid Atlas Core version: ${version}`);
   }
 }
