@@ -25,12 +25,12 @@ export type SpatialMapOverlay = {
 };
 
 export function pushSources(map: MlMap, sources: MapSources): void {
-  (map.getSource("geofeatures") as maplibregl.GeoJSONSource | undefined)?.setData(sources.geofeatures);
+  void (map.getSource("geofeatures") as maplibregl.GeoJSONSource | undefined)?.setData(sources.geofeatures);
 }
 
 export function pushEditingOverlay(map: MlMap, editing: MapEditing | undefined): void {
   const overlay = map.getSource("editing") as maplibregl.GeoJSONSource | undefined;
-  overlay?.setData(
+  void overlay?.setData(
     editing
       ? {
           type: "FeatureCollection",
@@ -42,7 +42,7 @@ export function pushEditingOverlay(map: MlMap, editing: MapEditing | undefined):
 
 export function pushSpatialOverlay(map: MlMap, overlay: SpatialMapOverlay | undefined): void {
   const source = map.getSource("spatial-results") as maplibregl.GeoJSONSource | undefined;
-  source?.setData(
+  void source?.setData(
     overlay
       ? {
           type: "FeatureCollection",

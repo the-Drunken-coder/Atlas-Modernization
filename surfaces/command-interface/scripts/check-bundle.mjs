@@ -18,8 +18,8 @@ const budgets = {
   // Movement history adds SDK response validators, sidebar controls and trail
   // layers. With explicit quantity unions: initial 432.07 kB, shell 159.13 kB, map 75.75 kB raw.
   // The SDK also reconciles authoritative 404 reads into its local cache.
-  // Linux initial gzip measures below 130.5 kB; allow a small margin for zlib variance.
-  initialJavaScript: { raw: 435_000, gzip: 131_500 },
+  // Rolldown 1.2.8 minifier drift adds about 0.4 kB; allow a small margin for zlib variance.
+  initialJavaScript: { raw: 436_500, gzip: 132_000 },
   initialCss: { raw: 513_000, gzip: 55_000 },
   // Includes Geo Feature creation and token-fenced deletion, Task cancellation,
   // command fixes, and draft lifecycle.
@@ -32,9 +32,9 @@ const budgets = {
   milsymbolJavaScript: { raw: 900_000, gzip: 240_000 },
   mapLibreCss: { raw: 85_000, gzip: 11_000 },
   mapRoute: { raw: 2_100_000, gzip: 550_000 },
-  // MapLibre 6.8 brings the combined build to about 3,710.5 kB raw / 1,027.8 kB gzip.
+  // MapLibre 6.8 and rolldown minifier drift bring the combined build to about 3,714.5 kB raw / 1,029.4 kB gzip.
   // Retain a small allowance for Linux zlib variance.
-  allJavaScript: { raw: 3_720_000, gzip: 1_032_000 },
+  allJavaScript: { raw: 3_721_000, gzip: 1_033_000 },
   allCss: { raw: 603_000, gzip: 67_000 }
 };
 

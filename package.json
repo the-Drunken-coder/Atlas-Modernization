@@ -48,8 +48,8 @@
     "test:clean-workspace": "node tests/clean-workspace-smoke.mjs"
   },
   "devDependencies": {
-    "@vitest/coverage-v8": "5.0.0",
-    "playwright": "1.62.1",
+    "@vitest/coverage-v8": "5.0.1",
+    "playwright": "1.63.0",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },

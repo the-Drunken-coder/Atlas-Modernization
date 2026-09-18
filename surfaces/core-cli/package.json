@@ -50,11 +50,11 @@
     "check": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run build && npm run test:package && npm run test:portable-package"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.12",
-    "@types/node": "^26.5.0",
-    "@types/react": "19.2.18",
+    "@biomejs/biome": "2.5.13",
+    "@types/node": "^26.5.1",
+    "@types/react": "19.3.0",
     "typescript": "^7.0.2",
-    "vitest": "^5.0.0"
+    "vitest": "^5.0.1"
   },
   "dependencies": {
     "ink": "7.1.1",
