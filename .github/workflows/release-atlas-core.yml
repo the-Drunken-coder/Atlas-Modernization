@@ -81,15 +81,6 @@ jobs:
             echo "tag_object=$tag_object"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Require protected immutable release tags
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_APP_ID: ${{ vars.ATLAS_CORE_RELEASE_APP_ID }}
-        run: |
-          bash .github/scripts/require-atlas-core-tag-rulesets.sh \
-            "Both Atlas Core release tag rulesets must remain active." \
-            "$RELEASE_APP_ID"
-
       - name: Revalidate exact required Core CI
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -218,10 +209,10 @@ jobs:
           VERSION: ${{ needs.inspect.outputs.version }}
         run: |
           set -euo pipefail
-          current_tag="atlas-core-v$VERSION"
-          previous_tag="$(timeout 2m gh release list --exclude-drafts --exclude-pre-releases --limit 100 --json tagName \
-            --jq '.[].tagName' | grep -E '^atlas-core-v[0-9]+\.[0-9]+\.[0-9]+$' | \
-            grep -Fxv "$current_tag" | sort --version-sort | tail -n 1 || true)"
+          releases="$RUNNER_TEMP/atlas-core-releases.json"
+          timeout 2m gh release list --exclude-drafts --exclude-pre-releases --limit 1000 --json tagName > "$releases"
+          previous_tag="$(node tools/atlas-core-release/dist/cli.js previous-release-tag \
+            --version "$VERSION" --releases "$releases")"
           {
             echo "# Atlas Core release context"
             echo
@@ -820,15 +811,6 @@ jobs:
             test "$(jq -r .preparation.run_id bundle/release-manifest.json)" = "$GITHUB_RUN_ID"
             test "$(jq -r .preparation.run_attempt bundle/release-manifest.json)" = "$GITHUB_RUN_ATTEMPT"
           fi
-
-      - name: Recheck release tag authority
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_APP_ID: ${{ vars.ATLAS_CORE_RELEASE_APP_ID }}
-        run: |
-          bash .github/scripts/require-atlas-core-tag-rulesets.sh \
-            "Both Atlas Core release tag rulesets must remain active before publication." \
-            "$RELEASE_APP_ID"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0

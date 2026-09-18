@@ -21,7 +21,9 @@ import {
   parseReleaseManifest,
   parseRuleset,
   planPublication,
+  previousReleaseTag,
   requireUnreservedVersion,
+  stringValue,
   validateManifest,
   validateNotes,
   validateNpmAttestation,
@@ -39,6 +41,9 @@ switch (command) {
     break;
   case "version-from-tag":
     process.stdout.write(`${versionFromTag(required(options, "tag"))}\n`);
+    break;
+  case "previous-release-tag":
+    previousReleaseTagCommand();
     break;
   case "verify-ci":
     await verifyCI();
@@ -100,8 +105,18 @@ switch (command) {
     break;
   default:
     throw new Error(
-      "usage: atlas-core-release <validate-version|version-from-tag|verify-ci|validate-reservation|reserve-tag|validate-release-tag|prepare-package|validate-notes|create-manifest|verify-bundle|plan-publication|inspect-publication|reconcile-publication|verify-completed-publication|inspect-image|promote-image|validate-npm-attestation|validate-tag-rulesets|require-immutable-releases|status> [--name value]"
+      "usage: atlas-core-release <validate-version|version-from-tag|previous-release-tag|verify-ci|validate-reservation|reserve-tag|validate-release-tag|prepare-package|validate-notes|create-manifest|verify-bundle|plan-publication|inspect-publication|reconcile-publication|verify-completed-publication|inspect-image|promote-image|validate-npm-attestation|validate-tag-rulesets|require-immutable-releases|status> [--name value]"
     );
+}
+
+function previousReleaseTagCommand(): void {
+  const releases = readJSON(required(options, "releases"));
+  if (!Array.isArray(releases)) throw new Error("GitHub Releases must be an array");
+  const tags = releases.map((release, index) =>
+    stringValue(objectValue(release, `GitHub Release ${index}`).tagName, `GitHub Release ${index} tag`)
+  );
+  const previous = previousReleaseTag(required(options, "version"), tags);
+  if (previous) process.stdout.write(`${previous}\n`);
 }
 
 async function verifyCI(): Promise<void> {

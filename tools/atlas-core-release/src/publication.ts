@@ -550,9 +550,11 @@ export class LivePublicationAdapters implements PublicationAdapters {
       !highestPublishedVersion || compareVersions(this.#manifest.release.version, highestPublishedVersion) >= 0
         ? "latest"
         : "recovered";
-    const npmTags = await this.#inspectNpmTags();
-    if (npmTags[expectedNpmTag] !== this.#manifest.release.version) {
-      throw new Error(`npm ${expectedNpmTag} does not identify Atlas Core ${this.#manifest.release.version}`);
+    if (expectedNpmTag === "latest") {
+      const npmTags = await this.#inspectNpmTags();
+      if (npmTags.latest !== this.#manifest.release.version) {
+        throw new Error(`npm latest does not identify Atlas Core ${this.#manifest.release.version}`);
+      }
     }
     const imageDigest = await inspectImageWithRetry(
       this.#runner,

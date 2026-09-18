@@ -16,6 +16,7 @@ import {
   type ObservedPublication,
   type PublicationOperation,
   planPublication,
+  previousReleaseTag,
   type ReleaseManifest,
   reconcilePublication,
   requireUnreservedVersion,
@@ -41,6 +42,28 @@ test("accepts stable SemVer and compares numerically", () => {
   assert.throws(() => requireUnreservedVersion("1.2.3", ["1.2.3"]), /not newer/);
   assert.throws(() => requireUnreservedVersion("1.2.2", ["1.2.3"]), /not newer/);
   assert.doesNotThrow(() => requireUnreservedVersion("1.2.4", ["1.2.3"]));
+});
+
+test("release notes use the newest published Core tag older than the candidate", () => {
+  const tags = [
+    "atlas-plugin-v9.0.0",
+    "atlas-core-v1.0.0",
+    "atlas-core-v1.1.9",
+    "atlas-core-v1.2.0",
+    "atlas-core-v1.3.0"
+  ];
+  assert.equal(previousReleaseTag("1.2.0", tags), "atlas-core-v1.1.9");
+  assert.equal(previousReleaseTag("1.0.0", tags), undefined);
+
+  const root = mkdtempSync(join(tmpdir(), "atlas-core-release-history-"));
+  try {
+    const releases = join(root, "releases.json");
+    writeFileSync(releases, `${JSON.stringify(tags.map((tagName) => ({ tagName })))}\n`);
+    const result = runCLI(["previous-release-tag", "--version", "1.2.0", "--releases", releases], root);
+    assert.equal(result.stdout.trim(), "atlas-core-v1.1.9");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("requires split creation and immutability tag rules", () => {
@@ -343,6 +366,17 @@ test("old-version recovery preserves newer npm latest state", () => {
     });
     assert.equal(plan.npmTag, "recovered");
     assert.deepEqual(plan.operations, ["promote-image", "publish-npm", "publish-github-release"]);
+
+    const completed = planPublication(fixture.manifest, {
+      sealedManifest: fixture.manifest,
+      imageDigest: fixture.manifest.image.digest,
+      npmIntegrity: fixture.manifest.package.integrity,
+      npmTags: { latest: "9.0.0", recovered: "8.0.0" },
+      githubRelease: "published",
+      highestPublishedVersion: "9.0.0"
+    });
+    assert.equal(completed.complete, true);
+    assert.deepEqual(completed.operations, []);
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
   }

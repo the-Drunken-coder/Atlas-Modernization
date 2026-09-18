@@ -25,8 +25,10 @@ new version. Never move or replace a release tag, overwrite a published package,
    enter a full 40-character commit SHA already reachable from `main`.
    The selected source must contain release contract schema 1, so a pre-cutover commit cannot accidentally run the
    retired coordinator workflow.
-4. The request waits up to 45 minutes for the exact required workflow runs. It then uses the dedicated release App to
-   create the annotated `atlas-core-v<version>` tag. This reserves the version and triggers **Release Atlas Core**.
+4. The request waits up to 45 minutes for the exact required workflow runs. Immediately before reservation, it uses a
+   read-only release App token to recheck immutable-release and tag-ruleset configuration. It then replaces that token
+   with a tag-only token and creates the annotated `atlas-core-v<version>` tag. This reserves the version and triggers
+   **Release Atlas Core**.
 5. Open the tag-triggered publication run. Review its notes, manifest, package hash, image digest, Actions artifact
    digest, and acceptance evidence in the run summary.
 6. Approve the `release-publish` environment deployment. The publisher uploads the exact bundle to a draft, publishes
@@ -79,6 +81,10 @@ byte-for-byte, the publisher makes the release an immutable prerelease and verif
 and every asset digest. Only then is the candidate sealed. Sealed GitHub Release assets are the permanent recovery
 source.
 
+The tag-triggered workflow never receives release App credentials. The request workflow owns the privileged ruleset
+check and tag write. Publication and recovery revalidate the exact annotated tag object, source commit, required CI,
+and candidate identity without depending on later repository-ruleset configuration.
+
 ## Publication and reconciliation
 
 Publication is serialized across all Core versions; preparation for different tags may run concurrently. The publisher
@@ -98,9 +104,10 @@ temporary transport, rate-limit, and visibility failures for up to 15 minutes. I
 `npm publish` returns an ambiguous response, the workflow inspects registry state and never repeats the publish call in
 that run.
 
-The newest stable Core release receives npm's `latest` tag. Recovery of an older version uses the `recovered` npm tag.
-Atlas Core never changes the repository-wide GitHub latest release because Core and Plugin releases share that
-namespace.
+The newest stable Core release receives npm's `latest` tag. An absent older version is initially published with npm's
+`recovered` tag so it cannot displace `latest`. Because npm has only one movable `recovered` tag, its later position is
+not part of an older release's identity or completion state. Atlas Core never changes the repository-wide GitHub latest
+release because Core and Plugin releases share that namespace.
 
 ## Cancellation and recovery
 

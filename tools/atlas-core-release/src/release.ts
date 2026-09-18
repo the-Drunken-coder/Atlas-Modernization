@@ -178,6 +178,16 @@ export function requireUnreservedVersion(requested: string, reserved: readonly s
   }
 }
 
+export function previousReleaseTag(currentVersion: string, tags: readonly string[]): string | undefined {
+  validateVersion(currentVersion);
+  return tags
+    .filter((tag) => /^atlas-core-v\d+\.\d+\.\d+$/u.test(tag))
+    .map((tag) => ({ tag, version: versionFromTag(tag) }))
+    .filter(({ version }) => compareVersions(version, currentVersion) < 0)
+    .sort((left, right) => compareVersions(left.version, right.version))
+    .at(-1)?.tag;
+}
+
 export function evaluateWorkflow(
   requirement: RequiredWorkflow,
   sourceSha: string,
@@ -525,7 +535,9 @@ export function planPublication(manifest: ReleaseManifest, observed: ObservedPub
   }
   if (!observed.imageDigest) operations.push("promote-image");
   if (!observed.npmIntegrity) operations.push("publish-npm");
-  if (observed.npmIntegrity && observed.npmTags?.[npmTag] !== manifest.release.version) operations.push("set-npm-tag");
+  if (npmTag === "latest" && observed.npmIntegrity && observed.npmTags?.latest !== manifest.release.version) {
+    operations.push("set-npm-tag");
+  }
   if (observed.githubRelease !== "published") operations.push("publish-github-release");
   return {
     operations,

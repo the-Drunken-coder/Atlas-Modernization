@@ -286,6 +286,29 @@ test("completed verification rejects mutable release metadata and incorrect npm 
   }
 });
 
+test("completed old-version recovery ignores the movable npm recovered tag", async () => {
+  const fixture = publicationFixture();
+  try {
+    const runner = new ControlledPublicationRunner(fixture.manifest, fixture.root, "github-create", "after");
+    runner.clearFailure();
+    await reconcileLivePublication(fixture.manifest, fixture.root, runner, { deadlineMs: 0, retryMs: 0 });
+    const writes = [...runner.trace];
+    runner.highestVersion = "9.0.0";
+    runner.npmTags.latest = "9.0.0";
+    runner.npmTags.recovered = "8.0.0";
+
+    const plan = await verifyCompletedLivePublication(fixture.manifest, fixture.root, runner, {
+      deadlineMs: 0,
+      retryMs: 0
+    });
+    assert.equal(plan.complete, true);
+    assert.deepEqual(plan.operations, []);
+    assert.deepEqual(runner.trace, writes);
+  } finally {
+    fixture.remove();
+  }
+});
+
 test("publication rejects checksum tampering and files outside the manifest contract", async () => {
   const checksumFixture = publicationFixture();
   try {
@@ -414,6 +437,7 @@ class ControlledPublicationRunner implements CommandRunner {
   releaseState: "absent" | "draft" | "sealed" | "published" = "absent";
   image: string | undefined = undefined;
   npm: string | undefined = undefined;
+  highestVersion: string | undefined = undefined;
   readonly npmTags: { latest?: string; recovered?: string } = {};
   releaseTitle: string | undefined = undefined;
   readonly trace: string[] = [];
@@ -546,7 +570,12 @@ class ControlledPublicationRunner implements CommandRunner {
       return success(JSON.stringify(this.npmTags));
     }
     if (args[0] === "view" && args[1] === "atlas-core" && args[2] === "versions") {
-      return success(JSON.stringify(this.npm ? [this.#manifest.release.version] : []));
+      return success(
+        JSON.stringify([
+          ...(this.npm ? [this.#manifest.release.version] : []),
+          ...(this.highestVersion ? [this.highestVersion] : [])
+        ])
+      );
     }
     if (args[0] === "view" && args[2] === "dist.integrity") {
       return this.npm ? success(this.npm) : failure("npm error E404 No match found");
