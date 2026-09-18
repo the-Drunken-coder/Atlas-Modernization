@@ -33,12 +33,12 @@ export function createEditingMarkers(
 ): InstanceType<MapLibreRuntime["Marker"]>[] {
   const overlay = map.getSource("editing") as maplibregl.GeoJSONSource | undefined;
   if (!editing) {
-    overlay?.setData(emptyFeatureCollection());
+    void overlay?.setData(emptyFeatureCollection());
     return [];
   }
 
   const previewGeometry = (geometry: UiGeometry) =>
-    overlay?.setData({
+    void overlay?.setData({
       type: "FeatureCollection",
       features: [{ type: "Feature", geometry: displayGeometry(geometry), properties: {} }]
     });

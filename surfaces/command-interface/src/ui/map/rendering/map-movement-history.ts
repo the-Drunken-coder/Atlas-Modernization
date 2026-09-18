@@ -104,5 +104,5 @@ export function pushMovementOverlay(map: MlMap, overlay: Pick<MovementMapOverlay
       }
     });
   }
-  (map.getSource(sourceID) as GeoJSONSource).setData(movementFeatures(overlay));
+  void (map.getSource(sourceID) as GeoJSONSource).setData(movementFeatures(overlay));
 }
