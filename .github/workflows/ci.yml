@@ -40,6 +40,12 @@ jobs:
           go-version-file: ${{ env.GO_VERSION_FILE }}
           cache-dependency-path: ${{ env.GO_SUM_FILE }}
 
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+
       - name: Run actionlint over all workflows
         # actionlint v1.7.11 predates GitHub's concurrency.queue syntax.
         run: >-
@@ -50,7 +56,11 @@ jobs:
         run: |
           bash -n .github/scripts/test-atlas-core-package.sh
           bash -n .github/scripts/require-atlas-core-tag-rulesets.sh
-          bash -n .github/scripts/verify-atlas-core-release-tag.sh
+
+      - name: Check Atlas Core release module
+        run: |
+          npm ci --workspace @atlas/atlas-core-release --ignore-scripts
+          npm run check --workspace @atlas/atlas-core-release
 
   go-quality:
     name: go-quality
@@ -257,9 +267,6 @@ jobs:
       - name: Check Atlas Core npm package
         run: npm run check --workspace atlas-core
 
-      - name: Test Atlas Core release validation
-        run: node --test .github/scripts/atlas-core-release.test.mjs
-
       - name: Validate packaged Docker Compose topology
         shell: bash
         run: |
@@ -319,7 +326,7 @@ jobs:
             (.volumes | keys) == ["minio_data"] and
             .volumes.minio_data.external == true and
             .volumes.minio_data.name == $volume
-          ' <<< "$init_config_json"
+              ' <<< "$init_config_json"
 
       - name: Build the current Core candidate in an isolated registry
         id: candidate
@@ -328,27 +335,13 @@ jobs:
           CORE_IMAGE_PLATFORM: ${{ matrix.platform }}
         run: |
           set -euo pipefail
-          registry_root="$RUNNER_TEMP/atlas-core-ci-registry"
           registry_container="atlas-core-ci-registry"
-          mkdir -p "$registry_root"
-          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
-            -keyout "$registry_root/registry.key" \
-            -out "$registry_root/registry.crt" \
-            -subj "/CN=localhost" \
-            -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
-          sudo install -d -m 0755 /etc/docker/certs.d/localhost:5000
-          sudo install -m 0644 "$registry_root/registry.crt" /etc/docker/certs.d/localhost:5000/ca.crt
-          sudo install -m 0644 "$registry_root/registry.crt" /usr/local/share/ca-certificates/atlas-core-ci.crt
-          sudo update-ca-certificates >/dev/null
           docker run --detach --name "$registry_container" \
             --publish 127.0.0.1:5000:5000 \
-            --volume "$registry_root:/certs:ro" \
             --env REGISTRY_HTTP_ADDR=0.0.0.0:5000 \
-            --env REGISTRY_HTTP_TLS_CERTIFICATE=/certs/registry.crt \
-            --env REGISTRY_HTTP_TLS_KEY=/certs/registry.key \
             registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
           for attempt in {1..30}; do
-            if curl --fail --silent --show-error --cacert "$registry_root/registry.crt" https://localhost:5000/v2/ >/dev/null; then
+            if curl --fail --silent --show-error http://localhost:5000/v2/ >/dev/null; then
               break
             fi
             if [ "$attempt" -eq 30 ]; then
@@ -365,10 +358,25 @@ jobs:
           digest="$(docker image inspect "$image_tag" --format '{{json .RepoDigests}}' | jq -er '.[] | select(startswith("localhost:5000/atlas-core@")) | split("@")[1] | select(test("^sha256:[0-9a-f]{64}$"))')"
           echo "image_reference=localhost:5000/atlas-core@$digest" >> "$GITHUB_OUTPUT"
 
+      - name: Exercise release image reconciliation against the isolated registry
+        env:
+          IMAGE_REFERENCE: ${{ steps.candidate.outputs.image_reference }}
+        run: |
+          set -euo pipefail
+          npm run build --workspace @atlas/atlas-core-release
+          digest="${IMAGE_REFERENCE##*@}"
+          target="localhost:5000/atlas-core:release-adapter-${{ matrix.architecture }}"
+          node tools/atlas-core-release/dist/cli.js promote-image \
+            --source "$IMAGE_REFERENCE" \
+            --target "$target" \
+            --digest "$digest"
+          test "$(node tools/atlas-core-release/dist/cli.js inspect-image --reference "$target")" = "$digest"
+
       - name: Exercise the current Core package initialization against Docker
         shell: bash
         env:
           IMAGE_REFERENCE: ${{ steps.candidate.outputs.image_reference }}
+          PACKAGE_VERSION: 0.0.1
           ATLAS_CORE_ACCEPTANCE_DISPOSABLE: "1"
           ATLAS_CORE_ACCEPTANCE_EXECUTION_MODE: "native"
           ATLAS_CORE_ACCEPTANCE_ARTIFACTS: ${{ runner.temp }}/atlas-core-package-acceptance
@@ -378,16 +386,18 @@ jobs:
           node --input-type=module - "$IMAGE_REFERENCE" <<'NODE'
           import { readFileSync, writeFileSync } from "node:fs";
           const image = process.argv[2];
+          const version = process.env.PACKAGE_VERSION;
+          if (!version) throw new Error("PACKAGE_VERSION is required");
           const packagePath = "surfaces/core-cli/package.json";
           const packageJSON = JSON.parse(readFileSync(packagePath, "utf8"));
           packageJSON.atlasCoreImage = image;
+          packageJSON.version = version;
           writeFileSync(packagePath, `${JSON.stringify(packageJSON, null, 2)}\n`);
-          const metadataPath = "surfaces/core-cli/dist/package-metadata.js";
-          const metadata = readFileSync(metadataPath, "utf8");
-          const updated = metadata.replace(/ghcr\.io\/the-drunken-coder\/atlas-core@sha256:[0-9a-f]{64}/u, image);
-          if (updated === metadata) throw new Error("Built Core package metadata did not contain its image pin.");
-          writeFileSync(metadataPath, updated);
           NODE
+          ATLAS_CORE_ALLOW_TEST_IMAGE=1 \
+            ATLAS_CORE_PACKAGE_IMAGE="$IMAGE_REFERENCE" \
+            ATLAS_CORE_PACKAGE_VERSION="$PACKAGE_VERSION" \
+            npm run build --workspace atlas-core
           package_dir="$RUNNER_TEMP/atlas-core-ci-package"
           mkdir -p "$package_dir"
           pack_json="$(npm pack --workspace atlas-core --ignore-scripts --pack-destination "$package_dir" --json --silent)"
@@ -401,8 +411,6 @@ jobs:
         run: |
           set +e
           docker rm --force atlas-core-ci-registry >/dev/null 2>&1
-          sudo rm -f /etc/docker/certs.d/localhost:5000/ca.crt /usr/local/share/ca-certificates/atlas-core-ci.crt
-          sudo update-ca-certificates >/dev/null 2>&1
 
       - name: Upload Atlas Core package acceptance evidence
         if: ${{ always() }}

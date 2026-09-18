@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   copyFileSync,
@@ -20,6 +21,7 @@ const npmCache = join(temporaryDirectory, "npm-cache");
 const startedAt = new Date().toISOString();
 const startedAtMilliseconds = Date.now();
 const configuredEvidencePath = process.env.ATLAS_CORE_PACKED_CLI_EVIDENCE;
+const suppliedPackagePath = process.env.ATLAS_CORE_PACKAGE_TARBALL;
 const evidencePath =
   configuredEvidencePath ?? join(mkdtempSync(join(tmpdir(), "atlas-core-portable-package-evidence-")), "result.json");
 const scenarios = [];
@@ -148,22 +150,33 @@ try {
   assertExpectedRuntime();
   scenarios.push("supported-host-runtime");
 
-  run(npmCommand, ["run", "build"], packageRoot);
-  scenarios.push("current-cli-build");
-  const packOutput = run(
-    npmCommand,
-    ["pack", packageRoot, "--ignore-scripts", "--pack-destination", temporaryDirectory, "--json", "--silent"],
-    packageRoot
-  );
-  const packed = JSON.parse(packOutput).find((entry) => typeof entry?.filename === "string");
-  if (!packed?.filename || typeof packed.version !== "string")
-    throw new Error("npm pack did not report a package tarball");
-  if (typeof packed.shasum !== "string" || typeof packed.integrity !== "string") {
-    throw new Error("npm pack did not report tarball integrity");
+  if (suppliedPackagePath) {
+    const bytes = readFileSync(suppliedPackagePath);
+    packedPackagePath = suppliedPackagePath;
+    packedArtifact = {
+      filename: suppliedPackagePath.split(/[\\/]/u).at(-1),
+      shasum: createHash("sha1").update(bytes).digest("hex"),
+      integrity: `sha512-${createHash("sha512").update(bytes).digest("base64")}`
+    };
+    scenarios.push("consumed-supplied-release-artifact");
+  } else {
+    run(npmCommand, ["run", "build"], packageRoot);
+    scenarios.push("current-cli-build");
+    const packOutput = run(
+      npmCommand,
+      ["pack", packageRoot, "--ignore-scripts", "--pack-destination", temporaryDirectory, "--json", "--silent"],
+      packageRoot
+    );
+    const packed = JSON.parse(packOutput).find((entry) => typeof entry?.filename === "string");
+    if (!packed?.filename || typeof packed.version !== "string")
+      throw new Error("npm pack did not report a package tarball");
+    if (typeof packed.shasum !== "string" || typeof packed.integrity !== "string") {
+      throw new Error("npm pack did not report tarball integrity");
+    }
+    packedArtifact = { filename: packed.filename, shasum: packed.shasum, integrity: packed.integrity };
+    packedPackagePath = join(temporaryDirectory, packed.filename);
+    scenarios.push("packed-current-cli-artifact");
   }
-  packedArtifact = { filename: packed.filename, shasum: packed.shasum, integrity: packed.integrity };
-  packedPackagePath = join(temporaryDirectory, packed.filename);
-  scenarios.push("packed-current-cli-artifact");
 
   const consumer = join(temporaryDirectory, "consumer");
   const fakeBin = join(temporaryDirectory, "fake-bin");
@@ -187,11 +200,7 @@ esac
   run("chmod", ["755", fakeDocker], temporaryDirectory);
 
   run(npmCommand, ["init", "--yes", "--silent"], consumer);
-  run(
-    npmCommand,
-    ["install", join(temporaryDirectory, packed.filename), "--ignore-scripts", "--no-audit", "--no-fund", "--silent"],
-    consumer
-  );
+  run(npmCommand, ["install", packedPackagePath, "--ignore-scripts", "--no-audit", "--no-fund", "--silent"], consumer);
   scenarios.push("installed-packed-cli-consumer");
 
   const installed = join(consumer, "node_modules", "atlas-core");

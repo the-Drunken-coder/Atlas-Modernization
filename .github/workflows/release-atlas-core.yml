@@ -1,57 +1,50 @@
 name: Release Atlas Core
-run-name: Atlas Core ${{ inputs.version }} from ${{ github.ref_name }} [coordinator ${{ inputs.coordinator_run_id || github.run_id }}/${{ inputs.coordinator_run_attempt || github.run_attempt }}]
+
+run-name: Release Atlas Core from ${{ github.ref_name }}
 
 on:
+  push:
+    tags:
+      - atlas-core-v*
   workflow_dispatch:
-    inputs:
-      version:
-        description: New stable SemVer from main, without v, for example 0.1.7
-        required: true
-        type: string
-      recover_existing_release:
-        description: Advanced recovery only, when this exact npm version already exists
-        required: false
-        default: false
-        type: boolean
-      coordinator_run_id:
-        description: Internal coordinator run ID, leave empty when starting a release
-        required: false
-        default: ""
-        type: string
-      coordinator_run_attempt:
-        description: Internal coordinator run attempt, leave empty when starting a release
-        required: false
-        default: ""
-        type: string
 
 permissions: {}
 
 concurrency:
-  group: release-atlas-core-${{ github.ref_type == 'tag' && github.ref_name || 'coordinator' }}
+  group: release-atlas-core-${{ github.ref_name }}
   cancel-in-progress: false
-  queue: max
 
 env:
-  GO_VERSION_FILE: services/core/go.mod
-  GO_SUM_FILE: services/core/go.sum
   NPM_VERSION: 11.6.2
   OPENCODE_VERSION: 1.18.21
   OPENCODE_MODEL: opencode-go/gpt-5.6-luna
+  IMAGE_REPOSITORY: ghcr.io/the-drunken-coder/atlas-core
 
 jobs:
-  changelog:
-    name: Draft and validate changelog
+  inspect:
+    name: Validate tag and inspect release state
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     permissions:
+      actions: read
+      attestations: read
       contents: read
+      packages: read
     outputs:
-      mode: ${{ steps.phase.outputs.mode }}
-      recovery: ${{ steps.phase.outputs.recovery }}
-      source_sha: ${{ steps.phase.outputs.source_sha }}
-      release_sha: ${{ steps.phase.outputs.release_sha }}
-      release_date: ${{ steps.release.outputs.release_date }}
+      mode: ${{ steps.state.outputs.mode }}
+      version: ${{ steps.identity.outputs.version }}
+      source_sha: ${{ steps.identity.outputs.source_sha }}
+      tag: ${{ steps.identity.outputs.tag }}
+      tag_object: ${{ steps.identity.outputs.tag_object }}
+      handoff_digest: sha256:${{ steps.sealed-artifact.outputs.artifact-digest }}
     steps:
-      - name: Checkout dispatched commit
+      - name: Require an immutable tag dispatch
+        if: github.ref_type != 'tag'
+        run: |
+          echo "Run recovery from the existing atlas-core-v<version> tag, never from a branch." >&2
+          exit 1
+
+      - name: Checkout tagged source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
@@ -63,771 +56,267 @@ jobs:
           node-version-file: .nvmrc
           package-manager-cache: false
 
-      - name: Validate and select release phase
-        id: phase
-        env:
-          COORDINATOR_RUN_ID: ${{ inputs.coordinator_run_id }}
-          COORDINATOR_RUN_ATTEMPT: ${{ inputs.coordinator_run_attempt }}
-          RECOVER_EXISTING_RELEASE: ${{ inputs.recover_existing_release }}
-          VERSION: ${{ inputs.version }}
+      - name: Install and build release tools
         run: |
-          node .github/scripts/atlas-core-release.mjs validate-version "$VERSION"
-          if [ -n "$COORDINATOR_RUN_ID" ] && [[ ! "$COORDINATOR_RUN_ID" =~ ^[0-9]+$ ]]; then
-            echo "The internal coordinator run ID must contain only digits." >&2
-            exit 1
-          fi
-          if [ -n "$COORDINATOR_RUN_ID" ] && [[ ! "$COORDINATOR_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]; then
-            echo "The internal coordinator run attempt must be a positive integer." >&2
-            exit 1
-          fi
-          if [ -z "$COORDINATOR_RUN_ID" ] && [ -n "$COORDINATOR_RUN_ATTEMPT" ]; then
-            echo "Leave both internal coordinator fields empty when starting a release." >&2
-            exit 1
-          fi
-          if [ -n "$COORDINATOR_RUN_ID" ] && [ "$GITHUB_REF" = "refs/heads/main" ]; then
-            echo "Leave the internal coordinator run ID empty when dispatching from main." >&2
-            exit 1
-          fi
-          expected_tag="refs/tags/atlas-core-v$VERSION"
-          if [ "$GITHUB_REF" != "refs/heads/main" ] && [ "$GITHUB_REF" != "$expected_tag" ]; then
-            echo "Dispatch Atlas Core releases from main or $expected_tag." >&2
-            exit 1
-          fi
-          if [ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]; then
-            echo "The checked-out commit does not match the dispatched commit." >&2
-            exit 1
-          fi
-          git fetch origin main --tags
-          tag="atlas-core-v$VERSION"
-          if ! git rev-parse --verify --quiet "refs/tags/$tag" >/dev/null; then
-            current_version="$(node -p "require('./surfaces/core-cli/package.json').version")"
-            node .github/scripts/atlas-core-release.mjs validate-next-version "$current_version" "$VERSION"
-            latest_tag="$(git tag --list 'atlas-core-v*' --sort=-version:refname | head -n 1)"
-            if [ -n "$latest_tag" ]; then
-              node .github/scripts/atlas-core-release.mjs \
-                validate-next-version "${latest_tag#atlas-core-v}" "$VERSION"
-            fi
-          fi
-          bash .github/scripts/select-atlas-core-release-phase.sh
+          npm ci --workspace @atlas/atlas-core-release --ignore-scripts
+          npm run build --workspace @atlas/atlas-core-release
 
-      - name: Require protected Atlas Core release tags
+      - name: Validate immutable source identity
+        id: identity
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="$(node tools/atlas-core-release/dist/cli.js version-from-tag --tag "$TAG")"
+          git fetch origin main:refs/remotes/origin/main --tags --force
+          source_sha="$(git rev-parse "refs/tags/$TAG^{commit}")"
+          tag_object="$(node tools/atlas-core-release/dist/cli.js validate-release-tag \
+            --version "$version" \
+            --source-sha "$source_sha")"
+          git merge-base --is-ancestor "$source_sha" origin/main
+          {
+            echo "version=$version"
+            echo "source_sha=$source_sha"
+            echo "tag=$TAG"
+            echo "tag_object=$tag_object"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Revalidate exact required Core CI
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_SHA: ${{ steps.identity.outputs.source_sha }}
+        run: |
+          node tools/atlas-core-release/dist/cli.js verify-ci \
+            --repository "$GITHUB_REPOSITORY" \
+            --source-sha "$SOURCE_SHA" \
+            --timeout-seconds 0 \
+            > "$RUNNER_TEMP/required-core-ci.json"
+
+      - name: Inspect permanent release bundle
+        id: state
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.identity.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p sealed-bundle
+          if release_json="$(timeout 2m gh release view "$TAG" --json isDraft,isPrerelease,name,body,assets 2>"$RUNNER_TEMP/release-error")"; then
+            if jq -e '.assets[] | select(.name == "release-manifest.json")' <<< "$release_json" >/dev/null; then
+              if [ "$(jq -r .isDraft <<< "$release_json")" = "true" ]; then
+                mode=prepare
+              else
+                release_api="$(timeout 2m gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG")"
+                if [ "$(jq -r .immutable <<< "$release_api")" != "true" ]; then
+                  echo "Published release $TAG is mutable and cannot be trusted as a sealed candidate." >&2
+                  exit 1
+                fi
+                timeout 5m gh release download "$TAG" --dir sealed-bundle
+                if [ "$(jq -r .isPrerelease <<< "$release_json")" = "true" ]; then
+                  mode=sealed
+                else
+                  node tools/atlas-core-release/dist/cli.js inspect-publication \
+                    --manifest sealed-bundle/release-manifest.json \
+                    --root sealed-bundle \
+                    > "$RUNNER_TEMP/publication-plan.json"
+                  if [ "$(jq -r .complete "$RUNNER_TEMP/publication-plan.json")" = "true" ]; then
+                    mode=complete
+                  else
+                    mode=sealed
+                  fi
+                fi
+              fi
+            elif [ "$(jq -r .isDraft <<< "$release_json")" = "true" ]; then
+              mode=prepare
+            else
+              echo "Published release $TAG has no sealed manifest." >&2
+              exit 1
+            fi
+          elif grep -qi 'release not found' "$RUNNER_TEMP/release-error"; then
+            mode=prepare
+          else
+            cat "$RUNNER_TEMP/release-error" >&2
+            exit 1
+          fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+
+      - name: Verify downloaded sealed bundle
+        if: steps.state.outputs.mode == 'sealed' || steps.state.outputs.mode == 'complete'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          bash .github/scripts/require-atlas-core-tag-rulesets.sh \
-            "Create both active Atlas Core release tag rulesets before releasing."
-
-      - name: Select changelog date
-        id: release
-        env:
-          VERSION: ${{ inputs.version }}
-        run: |
-          existing_date="$(node .github/scripts/atlas-core-release.mjs existing-date "$VERSION")"
-          if [ -n "$existing_date" ]; then
-            echo "already_prepared=true" >> "$GITHUB_OUTPUT"
-            echo "release_date=$existing_date" >> "$GITHUB_OUTPUT"
-          else
-            echo "already_prepared=false" >> "$GITHUB_OUTPUT"
-            echo "release_date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+          node tools/atlas-core-release/dist/cli.js verify-bundle \
+            --manifest sealed-bundle/release-manifest.json \
+            --root sealed-bundle
+          (cd sealed-bundle && sha256sum --check SHA256SUMS)
+          release_json="$(timeout 2m gh release view "${{ steps.identity.outputs.tag }}" --json isPrerelease,name,body)"
+          test "$(jq -r .name <<< "$release_json")" = "Atlas Core ${{ steps.identity.outputs.version }}"
+          if [ "${{ steps.state.outputs.mode }}" = complete ]; then
+            test "$(jq -r .isPrerelease <<< "$release_json")" = false
           fi
+          test "$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/${{ steps.identity.outputs.tag }}" --jq .immutable)" = true
+          gh release verify "${{ steps.identity.outputs.tag }}"
+          for path in sealed-bundle/*; do gh release verify-asset "${{ steps.identity.outputs.tag }}" "$path"; done
+          test "$(jq -r .body <<< "$release_json" | sed 's/\r$//')" = \
+            "$(sed 's/\r$//' sealed-bundle/release-notes.md)"
+          jq -e \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg source "${{ steps.identity.outputs.source_sha }}" \
+            --arg tag "${{ steps.identity.outputs.tag }}" \
+            --arg tag_object "${{ steps.identity.outputs.tag_object }}" \
+            '.release.repository == $repository and .release.source_sha == $source and
+             .release.tag_name == $tag and .release.tag_object == $tag_object' \
+            sealed-bundle/release-manifest.json >/dev/null
 
-      - name: Build factual changelog context
-        if: steps.phase.outputs.mode == 'prepare' && steps.release.outputs.already_prepared == 'false'
-        env:
-          VERSION: ${{ inputs.version }}
-          RELEASE_DATE: ${{ steps.release.outputs.release_date }}
+      - name: Upload sealed recovery bundle
+        id: sealed-artifact
+        if: steps.state.outputs.mode == 'sealed'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: atlas-core-sealed-${{ steps.identity.outputs.version }}-${{ github.run_id }}
+          path: sealed-bundle/
+          if-no-files-found: error
+          retention-days: 90
+
+  notes:
+    name: Generate fixed release notes
+    if: needs.inspect.outputs.mode == 'prepare'
+    needs: inspect
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+
+      - name: Install and build release tools
         run: |
-          previous_tag="$(git tag --list 'atlas-core-v*' --sort=-version:refname | head -n 1)"
+          npm ci --workspace @atlas/atlas-core-release --ignore-scripts
+          npm run build --workspace @atlas/atlas-core-release
+
+      - name: Build factual release context
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.inspect.outputs.version }}
+        run: |
+          set -euo pipefail
+          releases="$RUNNER_TEMP/atlas-core-releases.json"
+          timeout 2m gh release list --exclude-drafts --exclude-pre-releases --limit 1000 --json tagName > "$releases"
+          previous_tag="$(node tools/atlas-core-release/dist/cli.js previous-release-tag \
+            --version "$VERSION" --releases "$releases")"
           {
             echo "# Atlas Core release context"
             echo
             echo "Version: $VERSION"
-            echo "Release date: $RELEASE_DATE"
+            echo "Source: ${{ needs.inspect.outputs.source_sha }}"
             echo "Previous Atlas Core tag: ${previous_tag:-none}"
+            echo
+            echo "## Previous published release notes"
+            if [ -n "$previous_tag" ]; then
+              gh release view "$previous_tag" --json body --jq .body 2>/dev/null || echo "Unavailable."
+            else
+              echo "None."
+            fi
             echo
             echo "## Relevant commits"
             if [ -n "$previous_tag" ]; then
               git log --format='- %h %s' "$previous_tag..HEAD" -- \
-                surfaces/core-cli services/core packages/protocol .github/workflows/release-atlas-core.yml
+                surfaces/core-cli services/core packages/protocol tools/atlas-core-release \
+                .github/workflows/release-atlas-core.yml
             else
               git log --max-count=100 --format='- %h %s' -- \
-                surfaces/core-cli services/core packages/protocol .github/workflows/release-atlas-core.yml
+                surfaces/core-cli services/core packages/protocol tools/atlas-core-release \
+                .github/workflows/release-atlas-core.yml
             fi
             echo
             echo "## Relevant changed files"
             if [ -n "$previous_tag" ]; then
               git diff --name-status "$previous_tag..HEAD" -- \
-                surfaces/core-cli services/core packages/protocol .github/workflows/release-atlas-core.yml
-            else
-              git ls-files surfaces/core-cli services/core packages/protocol .github/workflows/release-atlas-core.yml
+                surfaces/core-cli services/core packages/protocol tools/atlas-core-release \
+                .github/workflows/release-atlas-core.yml
             fi
           } > .atlas-core-release-context.md
 
-      - name: Write changelog with OpenCode Go
-        if: steps.phase.outputs.mode == 'prepare' && steps.release.outputs.already_prepared == 'false'
+      - name: Generate standalone notes with OpenCode Go
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           OPENCODE_DISABLE_AUTOUPDATE: "true"
           OPENCODE_DISABLE_DEFAULT_PLUGINS: "true"
           OPENCODE_DISABLE_LSP_DOWNLOAD: "true"
           OPENCODE_PERMISSION: '{"bash":"deny","task":"deny","webfetch":"deny","websearch":"deny","question":"deny","edit":"allow","read":"allow","glob":"allow","grep":"allow","list":"allow","external_directory":"deny"}'
-          VERSION: ${{ inputs.version }}
-          RELEASE_DATE: ${{ steps.release.outputs.release_date }}
+          VERSION: ${{ needs.inspect.outputs.version }}
         run: |
           prompt="$(cat <<EOF
-          Edit CHANGELOG.md and no other file.
+          Create release-notes.md and edit no tracked file.
 
-          Add a release section whose exact heading is:
-          ## $VERSION - $RELEASE_DATE
+          The first line must be exactly:
+          # Atlas Core $VERSION
 
-          Keep every existing byte of CHANGELOG.md in place. If it has no existing release heading that starts with
-          '## ', append the new section after the existing title and introduction with exactly one blank line before
-          the new release heading. Otherwise, insert it immediately before the first existing release heading. Never
-          place it before '# Changelog'.
-
-          Read .atlas-core-release-context.md and the relevant repository files. Write concise operator-facing
-          release notes using only facts you can verify. Use Markdown bullets. Add Added, Changed, Fixed, or Security
-          subheadings only when they help. Mention commands, installation, storage safety, compatibility, and release
-          behavior when they changed. Do not invent claims, use placeholders, discuss internal test work, or rewrite
-          older release sections. Do not run commands. Stop after editing CHANGELOG.md.
+          Read .atlas-core-release-context.md and relevant repository files. Write concise operator-facing release
+          notes using only facts you can verify. Use Markdown bullets. Mention commands, installation, storage safety,
+          compatibility, and release behavior when they changed. Do not invent claims, use placeholders, discuss
+          internal test work, edit CHANGELOG.md, or run commands. Stop after writing release-notes.md.
           EOF
           )"
           npx --yes "opencode-ai@$OPENCODE_VERSION" run \
             --pure \
             --model "$OPENCODE_MODEL" \
-            --title "Atlas Core $VERSION changelog" \
+            --title "Atlas Core $VERSION release notes" \
             "$prompt"
 
-      - name: Validate isolated changelog
-        if: steps.phase.outputs.mode == 'prepare'
-        env:
-          VERSION: ${{ inputs.version }}
-          RELEASE_DATE: ${{ steps.release.outputs.release_date }}
-          ALREADY_PREPARED: ${{ steps.release.outputs.already_prepared }}
+      - name: Accept only standalone notes
         run: |
-          rm -f .atlas-core-release-context.md
-          if [ "$ALREADY_PREPARED" = "false" ]; then
-            changed="$(git diff --name-only)"
-            if [ "$changed" != "CHANGELOG.md" ]; then
-              echo "OpenCode must change only CHANGELOG.md. Changed files:" >&2
-              printf '%s\n' "$changed" >&2
-              exit 1
-            fi
-            untracked="$(git ls-files --others --exclude-standard)"
-            if [ -n "$untracked" ]; then
-              echo "OpenCode left unexpected files:" >&2
-              printf '%s\n' "$untracked" >&2
-              exit 1
-            fi
-            ignored="$(git ls-files --others --ignored --exclude-standard)"
-            if [ -n "$ignored" ]; then
-              echo "OpenCode left unexpected ignored files:" >&2
-              printf '%s\n' "$ignored" >&2
-              exit 1
-            fi
-          fi
-          mkdir -p release-artifacts
-          if [ "$ALREADY_PREPARED" = "false" ]; then
-            original_changelog="$(mktemp)"
-            git show HEAD:CHANGELOG.md > "$original_changelog"
-            node .github/scripts/atlas-core-release.mjs \
-              validate-changelog "$VERSION" "$RELEASE_DATE" release-artifacts/release-notes.md "$original_changelog"
-            rm -f "$original_changelog"
-          else
-            node .github/scripts/atlas-core-release.mjs \
-              validate-changelog "$VERSION" "$RELEASE_DATE" release-artifacts/release-notes.md
-          fi
-
-      - name: Upload isolated changelog
-        if: steps.phase.outputs.mode == 'prepare'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: atlas-core-changelog-${{ inputs.version }}
-          path: |
-            CHANGELOG.md
-            release-artifacts/release-notes.md
-          if-no-files-found: error
-          retention-days: 90
-
-  prepare:
-    name: Build approval artifact
-    needs: changelog
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout dispatched commit
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Download isolated changelog
-        if: needs.changelog.outputs.mode == 'prepare'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: atlas-core-changelog-${{ inputs.version }}
-          path: reviewed-changelog
-
-      - name: Accept only the reviewed changelog artifact
-        if: needs.changelog.outputs.mode == 'prepare'
-        env:
-          VERSION: ${{ inputs.version }}
-          RELEASE_DATE: ${{ needs.changelog.outputs.release_date }}
-        run: |
-          expected="$(printf '%s\n' CHANGELOG.md release-artifacts/release-notes.md | sort)"
-          actual="$(find reviewed-changelog -type f -print | sed 's#^reviewed-changelog/##' | sort)"
-          if [ "$actual" != "$expected" ]; then
-            echo "The isolated changelog job returned unexpected files:" >&2
-            printf '%s\n' "$actual" >&2
-            exit 1
-          fi
-          cp reviewed-changelog/CHANGELOG.md CHANGELOG.md
-          mkdir -p release-artifacts
-          cp reviewed-changelog/release-artifacts/release-notes.md release-artifacts/release-notes.md
-          if git diff --quiet -- CHANGELOG.md; then
-            node .github/scripts/atlas-core-release.mjs \
-              validate-changelog "$VERSION" "$RELEASE_DATE" release-artifacts/release-notes.md
-          else
-            original_changelog="$(mktemp)"
-            git show HEAD:CHANGELOG.md > "$original_changelog"
-            node .github/scripts/atlas-core-release.mjs \
-              validate-changelog "$VERSION" "$RELEASE_DATE" release-artifacts/release-notes.md "$original_changelog"
-            rm -f "$original_changelog"
-          fi
-          rm -rf reviewed-changelog
-
-      - name: Prepare committed release notes
-        if: needs.changelog.outputs.mode == 'publish'
-        env:
-          VERSION: ${{ inputs.version }}
-          RELEASE_DATE: ${{ needs.changelog.outputs.release_date }}
-        run: |
-          mkdir -p release-artifacts
-          node .github/scripts/atlas-core-release.mjs \
-            validate-changelog "$VERSION" "$RELEASE_DATE" release-artifacts/release-notes.md
-
-      - name: Set up Go
-        if: needs.changelog.outputs.mode == 'prepare'
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: ${{ env.GO_VERSION_FILE }}
-          cache-dependency-path: ${{ env.GO_SUM_FILE }}
-
-      - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version-file: .nvmrc
-          package-manager-cache: false
-
-      - name: Install exact npm and Atlas Core dependencies
-        run: |
-          npm install --global --ignore-scripts "npm@$NPM_VERSION"
-          npm --version | grep -Fx "$NPM_VERSION"
-          npm ci --workspace atlas-core --ignore-scripts
-
-      - name: Version the npm CLI
-        if: needs.changelog.outputs.mode == 'prepare'
-        env:
-          VERSION: ${{ inputs.version }}
-        run: |
-          node .github/scripts/atlas-core-release.mjs prepare-package "$VERSION"
-          npm version "$VERSION" --workspace atlas-core --no-git-tag-version --allow-same-version
-
-      - name: Check versioned release inputs
-        if: needs.changelog.outputs.mode == 'prepare'
-        run: |
-          npm audit --audit-level=high
-          npm run check --workspace atlas-core
-          node --test .github/scripts/atlas-core-release.test.mjs
-          (cd packages/protocol && go run ./tools/check && go test ./...)
-          (cd services/core && go test ./...)
-
-      - name: Check immutable package inputs
-        if: needs.changelog.outputs.mode == 'publish'
-        run: |
-          npm run check --workspace atlas-core
+          set -euo pipefail
           git diff --exit-code
-
-      - name: Pack the npm CLI
-        if: github.ref_type != 'tag' || inputs.coordinator_run_id == ''
-        env:
-          VERSION: ${{ inputs.version }}
-        run: |
-          npm pack --workspace atlas-core \
-            --pack-destination release-artifacts \
-            --json \
-            --silent > release-artifacts/npm-pack.json
-          test -f "release-artifacts/atlas-core-$VERSION.tgz"
-          (
-            cd release-artifacts
-            sha256sum "atlas-core-$VERSION.tgz" > SHA256SUMS
-          )
-
-      - name: Validate release diff
-        if: needs.changelog.outputs.mode == 'prepare'
-        run: |
-          source .github/scripts/atlas-core-release-files.sh
-          validate_atlas_core_release_paths "Unexpected release change" < <(git diff --name-only)
-          git diff --check
-          git diff -- "${atlas_core_release_paths[@]}" | tee release-artifacts/release.diff
-
-      - name: Upload reviewed release
-        if: github.ref_type != 'tag' || inputs.coordinator_run_id == ''
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: atlas-core-${{ inputs.version }}
-          path: |
-            CHANGELOG.md
-            package-lock.json
-            surfaces/core-cli/package.json
-            surfaces/core-cli/src/package-metadata.ts
-            release-artifacts/
-          if-no-files-found: error
-          retention-days: 90
-
-      - name: Summarize release gate
-        env:
-          COORDINATOR_RUN_ID: ${{ inputs.coordinator_run_id }}
-          MODE: ${{ needs.changelog.outputs.mode }}
-          RECOVERY: ${{ needs.changelog.outputs.recovery }}
-          REF_NAME: ${{ github.ref_name }}
-          RELEASE_SHA: ${{ needs.changelog.outputs.release_sha }}
-          SOURCE_SHA: ${{ needs.changelog.outputs.source_sha }}
-          VERSION: ${{ inputs.version }}
-        run: |
-          printf '## Atlas Core %s release\n\n' "$VERSION" >> "$GITHUB_STEP_SUMMARY"
-          if [ "$RECOVERY" = "true" ]; then
-            {
-              printf '%s\n' '- Phase: recover an existing published release with the current workflow.'
-              printf -- '- Immutable release commit: %s\n' "$RELEASE_SHA"
-              printf -- '- Review artifact: atlas-core-%s\n' "$VERSION"
-              printf '%s\n' '- This approval may repair the GitHub Release. It cannot move the tag or publish a missing npm version.'
-            } >> "$GITHUB_STEP_SUMMARY"
-          elif [ "$MODE" = "prepare" ]; then
-            {
-              printf '%s\n' '- Phase: prepare a new release from main.'
-              printf -- '- Source commit: %s\n' "$SOURCE_SHA"
-              printf -- '- Review artifact: atlas-core-%s\n' "$VERSION"
-              printf '%s\n' '- Review release-artifacts/release.diff and the generated release notes.'
-              printf '%s\n' '- Approval permits candidate image publication, disposable-host acceptance, the atomic release commit and tag push, and automatic public publication from the immutable tag.'
-              printf '%s\n' '- This run waits for the tag run and reports the final publication result.'
-            } >> "$GITHUB_STEP_SUMMARY"
-          else
-            {
-              printf -- '- Phase: publish immutable tag %s.\n' "$REF_NAME"
-              printf -- '- Release commit: %s\n' "$RELEASE_SHA"
-              printf -- '- Final artifact: atlas-core-%s\n' "$VERSION"
-              if [ -n "$COORDINATOR_RUN_ID" ]; then
-                printf -- '- Coordinator: %s/%s/actions/runs/%s\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$COORDINATOR_RUN_ID"
-              fi
-              printf '%s\n' '- The immutable tag was approved before creation. This run completes or repairs its publication.'
-            } >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-  authorize-tag-publication:
-    name: Verify coordinator authorization
-    if: github.ref_type == 'tag' && inputs.coordinator_run_id != ''
-    needs: [changelog, prepare]
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      actions: read
-      contents: read
-    outputs:
-      package_integrity: ${{ steps.authorization.outputs.package_integrity }}
-      release_artifact_digest: ${{ steps.authorization.outputs.release_artifact_digest }}
-      release_artifact_id: ${{ steps.authorization.outputs.release_artifact_id }}
-      release_artifact_name: ${{ steps.authorization.outputs.release_artifact_name }}
-    steps:
-      - name: Wait for coordinator authorization
-        env:
-          COORDINATOR_RUN_ID: ${{ inputs.coordinator_run_id }}
-          COORDINATOR_RUN_ATTEMPT: ${{ inputs.coordinator_run_attempt }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ inputs.version }}
-        run: |
-          artifact_name="atlas-core-publication-authorization-$VERSION-$COORDINATOR_RUN_ID-$COORDINATOR_RUN_ATTEMPT"
-          for attempt in $(seq 1 60); do
-            artifacts="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$COORDINATOR_RUN_ID/artifacts?per_page=100")"
-            if jq -e --arg name "$artifact_name" \
-              '.artifacts[] | select(.name == $name and .expired == false)' <<< "$artifacts" >/dev/null; then
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "The coordinator authorization artifact was not uploaded after $attempt attempts." >&2
-          exit 1
-
-      - name: Download coordinator authorization
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: "atlas-core-publication-authorization-${{ inputs.version }}-${{ inputs.coordinator_run_id }}-${{ inputs.coordinator_run_attempt }}"
-          path: coordinator-authorization
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          repository: ${{ github.repository }}
-          run-id: ${{ inputs.coordinator_run_id }}
-
-      - name: Verify coordinator authorization
-        id: authorization
-        env:
-          CHILD_RUN_ID: ${{ github.run_id }}
-          COORDINATOR_RUN_ID: ${{ inputs.coordinator_run_id }}
-          EXPECTED_COORDINATOR_RUN_ATTEMPT: ${{ inputs.coordinator_run_attempt }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_SHA: ${{ needs.changelog.outputs.release_sha }}
-          SOURCE_SHA: ${{ needs.changelog.outputs.source_sha }}
-          VERSION: ${{ inputs.version }}
-        run: |
-          authorization="coordinator-authorization/publication-authorization.json"
-          coordinator="$(mktemp)"
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$COORDINATOR_RUN_ID" > "$coordinator"
-          actual="$(find coordinator-authorization -type f -print)"
-          if [ "$actual" != "$authorization" ]; then
-            echo "The coordinator authorization artifact has unexpected files." >&2
+          actual="$(git ls-files --others --exclude-standard | sort)"
+          expected="$(printf '%s\n' .atlas-core-release-context.md release-notes.md | sort)"
+          if [ "$actual" != "$expected" ]; then
+            echo "OpenCode changed files outside the standalone notes boundary:" >&2
             printf '%s\n' "$actual" >&2
             exit 1
           fi
-          coordinator_run_attempt="$(
-            jq -er '.coordinator_run_attempt | select(type == "string" and test("^[1-9][0-9]*$"))' \
-              "$authorization"
-          )"
-          if [ "$coordinator_run_attempt" != "$EXPECTED_COORDINATOR_RUN_ATTEMPT" ]; then
-            echo "The coordinator authorization identifies a different run attempt." >&2
-            exit 1
-          fi
-          package_integrity="$(
-            jq -er '.package_integrity | select(type == "string" and test("^sha512-[A-Za-z0-9+/]+={0,2}$"))' \
-              "$authorization"
-          )"
-          release_artifact_digest="$(
-            jq -er '.release_artifact_digest | select(type == "string" and test("^sha256:[0-9a-f]{64}$"))' \
-              "$authorization"
-          )"
-          release_artifact_id="$(
-            jq -er '.release_artifact_id | select(type == "string" and test("^[1-9][0-9]*$"))' \
-              "$authorization"
-          )"
-          release_artifact_name="$(
-            jq -er '.release_artifact_name | select(type == "string")' "$authorization"
-          )"
-          artifact_prefix="atlas-core-final-$VERSION-$COORDINATOR_RUN_ID-"
-          artifact_attempt="${release_artifact_name#"$artifact_prefix"}"
-          if [ "$artifact_attempt" = "$release_artifact_name" ] || \
-             [[ ! "$artifact_attempt" =~ ^[1-9][0-9]*$ ]]; then
-            echo "The coordinator authorization identifies a malformed release artifact name." >&2
-            exit 1
-          fi
-          jq -e \
-            --arg child_run_id "$CHILD_RUN_ID" \
-            --arg coordinator_run_id "$COORDINATOR_RUN_ID" \
-            --arg coordinator_run_attempt "$coordinator_run_attempt" \
-            --arg package_integrity "$package_integrity" \
-            --arg release_sha "$RELEASE_SHA" \
-            --arg release_artifact_digest "$release_artifact_digest" \
-            --arg release_artifact_id "$release_artifact_id" \
-            --arg release_artifact_name "$release_artifact_name" \
-            --arg repository "$GITHUB_REPOSITORY" \
-            --arg source_sha "$SOURCE_SHA" \
-            --arg tag "atlas-core-v$VERSION" \
-            --arg version "$VERSION" \
-            '. == {
-              schema: 3,
-              repository: $repository,
-              workflow: "release-atlas-core.yml",
-              coordinator_run_id: $coordinator_run_id,
-              coordinator_run_attempt: $coordinator_run_attempt,
-              child_run_id: $child_run_id,
-              version: $version,
-              tag: $tag,
-              source_sha: $source_sha,
-              release_sha: $release_sha,
-              release_artifact_id: $release_artifact_id,
-              release_artifact_name: $release_artifact_name,
-              release_artifact_digest: $release_artifact_digest,
-              package_integrity: $package_integrity
-            }' \
-            "$authorization" >/dev/null
-          jq -e \
-            --arg coordinator_run_attempt "$coordinator_run_attempt" \
-            --arg repository "$GITHUB_REPOSITORY" \
-            --arg source_sha "$SOURCE_SHA" \
-            '.event == "workflow_dispatch" and
-             .head_branch == "main" and
-             .head_sha == $source_sha and
-             .run_attempt == ($coordinator_run_attempt | tonumber) and
-             .status == "in_progress" and
-             .path == ".github/workflows/release-atlas-core.yml" and
-             .repository.full_name == $repository' \
-            "$coordinator" >/dev/null
-          {
-            echo "package_integrity=$package_integrity"
-            echo "release_artifact_digest=$release_artifact_digest"
-            echo "release_artifact_id=$release_artifact_id"
-            echo "release_artifact_name=$release_artifact_name"
-          } >> "$GITHUB_OUTPUT"
+          rm .atlas-core-release-context.md
+          node tools/atlas-core-release/dist/cli.js validate-notes \
+            --path release-notes.md \
+            --version "${{ needs.inspect.outputs.version }}"
 
-      - name: Verify exact coordinator package artifact
-        env:
-          COORDINATOR_RUN_ID: ${{ inputs.coordinator_run_id }}
-          COORDINATOR_RUN_ATTEMPT: ${{ inputs.coordinator_run_attempt }}
-          EXPECTED_ARTIFACT_DIGEST: ${{ steps.authorization.outputs.release_artifact_digest }}
-          EXPECTED_ARTIFACT_ID: ${{ steps.authorization.outputs.release_artifact_id }}
-          EXPECTED_ARTIFACT_NAME: ${{ steps.authorization.outputs.release_artifact_name }}
-          EXPECTED_PACKAGE_INTEGRITY: ${{ steps.authorization.outputs.package_integrity }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ inputs.version }}
-        run: |
-          artifact="$(mktemp)"
-          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$EXPECTED_ARTIFACT_ID" > "$artifact"
-          jq -e \
-            --arg digest "$EXPECTED_ARTIFACT_DIGEST" \
-            --arg id "$EXPECTED_ARTIFACT_ID" \
-            --arg name "$EXPECTED_ARTIFACT_NAME" \
-            --arg run_id "$COORDINATOR_RUN_ID" \
-            '.id == ($id | tonumber) and
-             .name == $name and
-             .expired == false and
-             .digest == $digest and
-             .workflow_run.id == ($run_id | tonumber)' \
-            "$artifact" >/dev/null
-          archive="$RUNNER_TEMP/atlas-core-final.zip"
-          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$EXPECTED_ARTIFACT_ID/zip" > "$archive"
-          actual_artifact_digest="sha256:$(sha256sum "$archive" | cut -d' ' -f1)"
-          if [ "$actual_artifact_digest" != "$EXPECTED_ARTIFACT_DIGEST" ]; then
-            echo "Coordinator artifact digest $actual_artifact_digest does not match $EXPECTED_ARTIFACT_DIGEST." >&2
-            exit 1
-          fi
-          artifact_root="$RUNNER_TEMP/coordinator-release"
-          mkdir -p "$artifact_root"
-          unzip -q "$archive" -d "$artifact_root"
-          package="$artifact_root/release-artifacts/atlas-core-$VERSION.tgz"
-          test -f "$package"
-          actual_package_integrity="sha512-$(openssl dgst -sha512 -binary "$package" | openssl base64 -A)"
-          if [ "$actual_package_integrity" != "$EXPECTED_PACKAGE_INTEGRITY" ]; then
-            echo "Coordinator package integrity does not match the approved publication." >&2
-            exit 1
-          fi
+      - name: Upload fixed notes
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: atlas-core-notes-${{ needs.inspect.outputs.version }}-${{ github.run_id }}
+          path: release-notes.md
+          if-no-files-found: error
+          retention-days: 90
 
-  approve-manual-tag-recovery:
-    name: Approve manual tag recovery
-    if: github.ref_type == 'tag' && inputs.coordinator_run_id == ''
-    needs: [changelog, prepare]
+  image:
+    name: Build multi-architecture image
+    if: needs.inspect.outputs.mode == 'prepare'
+    needs: inspect
     runs-on: ubuntu-latest
-    environment: release
-    permissions: {}
-    steps:
-      - name: Record recovery approval
-        env:
-          VERSION: ${{ inputs.version }}
-        run: printf 'Approved manual recovery for Atlas Core %s.\n' "$VERSION" >> "$GITHUB_STEP_SUMMARY"
-
-  publish:
-    name: Run approved release phase
-    if: >-
-      !cancelled() &&
-      needs.changelog.result == 'success' &&
-      needs.prepare.result == 'success' &&
-      (needs.authorize-tag-publication.result == 'success' ||
-      needs.authorize-tag-publication.result == 'skipped') &&
-      (needs.approve-manual-tag-recovery.result == 'success' ||
-      needs.approve-manual-tag-recovery.result == 'skipped')
-    needs: [changelog, prepare, authorize-tag-publication, approve-manual-tag-recovery]
-    runs-on: ubuntu-latest
-    environment:
-      name: ${{ github.ref_type == 'tag' && 'release-publish' || 'release' }}
-    concurrency:
-      group: release-atlas-core-mutator
-      cancel-in-progress: false
-      queue: max
+    timeout-minutes: 45
     permissions:
-      actions: read
-      contents: write
-      id-token: write
+      contents: read
       packages: write
     outputs:
-      package_integrity: ${{ steps.final-package.outputs.package_integrity }}
-      release_artifact_digest: sha256:${{ steps.final-artifact.outputs.artifact-digest }}
-      release_artifact_id: ${{ steps.final-artifact.outputs.artifact-id }}
+      digest: ${{ steps.build.outputs.digest }}
+      reference: ${{ steps.identity.outputs.reference }}
     steps:
-      - name: Checkout dispatched commit
+      - name: Checkout tagged source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
           persist-credentials: false
 
-      - name: Download locally reviewed release
-        if: github.ref_type != 'tag' || inputs.coordinator_run_id == ''
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: atlas-core-${{ inputs.version }}
-          path: .
-
-      - name: Download coordinator-approved release
-        if: github.ref_type == 'tag' && inputs.coordinator_run_id != ''
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          artifact-ids: ${{ needs.authorize-tag-publication.outputs.release_artifact_id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          path: coordinator-release
-          repository: ${{ github.repository }}
-          run-id: ${{ inputs.coordinator_run_id }}
-
-      - name: Accept only the coordinator-approved release
-        if: github.ref_type == 'tag' && inputs.coordinator_run_id != ''
-        env:
-          VERSION: ${{ inputs.version }}
-        run: |
-          if find coordinator-release -type l -print -quit | grep -q .; then
-            echo "The coordinator release artifact contains a symbolic link." >&2
-            exit 1
-          fi
-          while IFS= read -r path; do
-            case "$path" in
-              CHANGELOG.md|package-lock.json|surfaces/core-cli/package.json|surfaces/core-cli/src/package-metadata.ts|release-artifacts/atlas-core-"$VERSION".tgz|release-artifacts/npm-pack.json|release-artifacts/SHA256SUMS|release-artifacts/release.diff|release-artifacts/release-notes.md)
-                ;;
-              *)
-                echo "Unexpected coordinator release artifact file: $path" >&2
-                exit 1
-                ;;
-            esac
-          done < <(find coordinator-release -type f -print | sed 's#^coordinator-release/##' | sort)
-          for path in CHANGELOG.md package-lock.json surfaces/core-cli/package.json surfaces/core-cli/src/package-metadata.ts; do
-            cmp "$path" "coordinator-release/$path"
-          done
-          rm -rf release-artifacts
-          cp -R coordinator-release/release-artifacts release-artifacts
-
-      - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version-file: .nvmrc
-          registry-url: https://registry.npmjs.org
-          package-manager-cache: false
-
-      - name: Install exact npm
-        run: |
-          npm install --global --ignore-scripts "npm@$NPM_VERSION"
-          npm --version | grep -Fx "$NPM_VERSION"
-
-      - name: Install Atlas Core dependencies
-        if: needs.changelog.outputs.mode == 'prepare'
-        run: |
-          npm ci --workspace atlas-core --ignore-scripts
-
-      - name: Verify reviewed package
-        env:
-          EXPECTED_PACKAGE_INTEGRITY: ${{ needs.authorize-tag-publication.outputs.package_integrity }}
-          VERSION: ${{ inputs.version }}
-        run: |
-          (
-            cd release-artifacts
-            sha256sum --check SHA256SUMS
-          )
-          package_version="$(node -p "require('./surfaces/core-cli/package.json').version")"
-          if [ "$package_version" != "$VERSION" ]; then
-            echo "Prepared package version $package_version does not match $VERSION." >&2
-            exit 1
-          fi
-          if [ -n "$EXPECTED_PACKAGE_INTEGRITY" ]; then
-            package="release-artifacts/atlas-core-$VERSION.tgz"
-            actual_package_integrity="sha512-$(openssl dgst -sha512 -binary "$package" | openssl base64 -A)"
-            if [ "$actual_package_integrity" != "$EXPECTED_PACKAGE_INTEGRITY" ]; then
-              echo "Downloaded package integrity does not match the coordinator authorization." >&2
-              exit 1
-            fi
-          fi
-
-      - name: Revalidate release phase
-        env:
-          RECOVER_EXISTING_RELEASE: ${{ inputs.recover_existing_release }}
-          VERSION: ${{ inputs.version }}
-        run: |
-          git fetch origin main --tags
-          bash .github/scripts/select-atlas-core-release-phase.sh
-
-      - name: Inspect npm publication state
-        id: npm
-        if: needs.changelog.outputs.mode == 'publish'
-        env:
-          VERSION: ${{ inputs.version }}
-        run: |
-          package="release-artifacts/atlas-core-$VERSION.tgz"
-          local_integrity="sha512-$(openssl dgst -sha512 -binary "$package" | openssl base64 -A)"
-          version_error="$(mktemp)"
-          if published_integrity="$(npm view "atlas-core@$VERSION" dist.integrity 2>"$version_error")"; then
-            if [ "$published_integrity" != "$local_integrity" ]; then
-              echo "atlas-core@$VERSION is already published with different contents." >&2
-              exit 1
-            fi
-            package_exists=true
-            version_exists=true
-          elif grep -q 'E404' "$version_error"; then
-            package_error="$(mktemp)"
-            if npm view atlas-core name >/dev/null 2>"$package_error"; then
-              package_exists=true
-            elif grep -q 'E404' "$package_error"; then
-              package_exists=false
-            else
-              cat "$package_error" >&2
-              exit 1
-            fi
-            version_exists=false
-          else
-            cat "$version_error" >&2
-            exit 1
-          fi
-
-          latest_stable=""
-          if [ "$package_exists" = "true" ]; then
-              latest_stable="$(
-                npm view atlas-core versions --json |
-                  jq -er '(if type == "array" then .[] else . end) |
-                    select(type == "string" and test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))' |
-                  sort --version-sort |
-                  tail -n 1
-              )"
-          fi
-          publish_tag=latest
-          make_latest=true
-          if [ -n "$latest_stable" ]; then
-            highest="$(printf '%s\n%s\n' "$latest_stable" "$VERSION" | sort --version-sort | tail -n 1)"
-            if [ "$highest" = "$latest_stable" ] && [ "$latest_stable" != "$VERSION" ]; then
-              publish_tag=recovered
-              make_latest=false
-            fi
-          fi
-          {
-            echo "integrity=$local_integrity"
-            echo "make_latest=$make_latest"
-            echo "package_exists=$package_exists"
-            echo "publish_tag=$publish_tag"
-            echo "version_exists=$version_exists"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Require an existing npm version for main recovery
-        if: needs.changelog.outputs.recovery == 'true' && steps.npm.outputs.version_exists != 'true'
-        env:
-          VERSION: ${{ inputs.version }}
-        run: |
-          echo "Main recovery cannot publish atlas-core@$VERSION with immutable-tag provenance." >&2
-          echo "Dispatch the workflow from atlas-core-v$VERSION to publish an absent npm version." >&2
-          exit 1
-
-      - name: Verify coordinator remains active before public mutation
-        if: github.ref_type == 'tag' && inputs.coordinator_run_id != ''
-        env:
-          COORDINATOR_RUN_ID: ${{ inputs.coordinator_run_id }}
-          COORDINATOR_RUN_ATTEMPT: ${{ inputs.coordinator_run_attempt }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$COORDINATOR_RUN_ID" |
-            jq -e \
-              --arg run_attempt "$COORDINATOR_RUN_ATTEMPT" \
-              --arg run_id "$COORDINATOR_RUN_ID" \
-              '.id == ($run_id | tonumber) and
-               .run_attempt == ($run_attempt | tonumber) and
-               .status == "in_progress"' >/dev/null
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4.3.0
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
@@ -839,13 +328,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up QEMU
-        if: needs.changelog.outputs.mode == 'prepare'
-        uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4.3.0
-
-      - name: Publish candidate Atlas Core image
-        id: built_image
-        if: needs.changelog.outputs.mode == 'prepare'
+      - name: Build and push candidate digest
+        id: build
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
@@ -853,829 +337,615 @@ jobs:
           target: production
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ghcr.io/the-drunken-coder/atlas-core:candidate-${{ inputs.version }}-${{ github.sha }}
+          tags: ${{ env.IMAGE_REPOSITORY }}:candidate-${{ needs.inspect.outputs.version }}-${{ needs.inspect.outputs.source_sha }}
           cache-from: type=gha,scope=atlas-core-release
           cache-to: type=gha,mode=max,scope=atlas-core-release
           no-cache-filters: production
           labels: |
-            org.opencontainers.image.source=https://github.com/the-Drunken-coder/Atlas-Modernization
-            org.opencontainers.image.revision=${{ needs.changelog.outputs.source_sha }}
-            org.opencontainers.image.version=${{ inputs.version }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ needs.inspect.outputs.source_sha }}
+            org.opencontainers.image.version=${{ needs.inspect.outputs.version }}
 
-      - name: Select immutable Atlas Core image
-        id: image
+      - name: Verify image identity
+        id: identity
         env:
-          BUILT_DIGEST: ${{ steps.built_image.outputs.digest }}
-          MODE: ${{ needs.changelog.outputs.mode }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          SOURCE_SHA: ${{ needs.inspect.outputs.source_sha }}
+          VERSION: ${{ needs.inspect.outputs.version }}
         run: |
-          if [ "$MODE" = "prepare" ]; then
-            digest="$BUILT_DIGEST"
-            reference="ghcr.io/the-drunken-coder/atlas-core@$digest"
-          else
-            reference="$(node -p "require('./surfaces/core-cli/package.json').atlasCoreImage || ''")"
-            digest="${reference##*@}"
-          fi
-          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || \
-             [ "$reference" != "ghcr.io/the-drunken-coder/atlas-core@$digest" ]; then
-            echo "Atlas Core did not produce a valid immutable image reference: $reference" >&2
-            exit 1
-          fi
-          echo "digest=$digest" >> "$GITHUB_OUTPUT"
-          echo "reference=$reference" >> "$GITHUB_OUTPUT"
-
-      - name: Verify immutable Atlas Core image
-        env:
-          IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
-          SOURCE_SHA: ${{ needs.changelog.outputs.source_sha }}
-          VERSION: ${{ inputs.version }}
-        run: |
-          set -o pipefail
+          set -euo pipefail
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          reference="$IMAGE_REPOSITORY@$DIGEST"
           for platform in linux/amd64 linux/arm64; do
-            config="$(
-              docker buildx imagetools inspect "$IMAGE_REFERENCE" \
-                --format "{{json (index .Image \"$platform\")}}"
-            )"
-            revision="$(jq -r '.config.Labels["org.opencontainers.image.revision"] // empty' <<< "$config")"
-            version="$(jq -r '.config.Labels["org.opencontainers.image.version"] // empty' <<< "$config")"
-            if [ "$revision" != "$SOURCE_SHA" ] || [ "$version" != "$VERSION" ]; then
-              echo "$IMAGE_REFERENCE has unexpected release labels for $platform." >&2
-              exit 1
-            fi
+            config="$(timeout 2m docker buildx imagetools inspect "$reference" --format "{{json (index .Image \"$platform\")}}")"
+            test "$(jq -r '.config.Labels["org.opencontainers.image.revision"]' <<< "$config")" = "$SOURCE_SHA"
+            test "$(jq -r '.config.Labels["org.opencontainers.image.version"]' <<< "$config")" = "$VERSION"
           done
-          actual_digest="$(
-            docker buildx imagetools inspect "$IMAGE_REFERENCE" --format '{{json .Manifest}}' |
-              jq -er '.digest | select(test("^sha256:[0-9a-f]{64}$"))'
-          )"
-          if [ "$actual_digest" != "${IMAGE_REFERENCE##*@}" ]; then
-            echo "$IMAGE_REFERENCE resolved to unexpected digest $actual_digest." >&2
-            exit 1
-          fi
+          echo "reference=$reference" >> "$GITHUB_OUTPUT"
+          jq -n --arg digest "$DIGEST" --arg reference "$reference" \
+            '{digest: $digest, reference: $reference, platforms: ["linux/amd64", "linux/arm64"]}' > image.json
 
-      - name: Record immutable image in the npm package
-        if: needs.changelog.outputs.mode == 'prepare'
-        env:
-          IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
-        run: |
-          node - <<'NODE'
-          const { readFileSync, writeFileSync } = require("node:fs");
-          const path = "surfaces/core-cli/package.json";
-          const packageJSON = JSON.parse(readFileSync(path, "utf8"));
-          if (packageJSON.atlasCoreImage !== null) {
-            throw new Error(`New release artifact already pins ${packageJSON.atlasCoreImage}`);
-          }
-          packageJSON.atlasCoreImage = process.env.IMAGE_REFERENCE;
-          writeFileSync(path, `${JSON.stringify(packageJSON, null, 2)}\n`);
-          NODE
-          npm run check --workspace atlas-core
-          git diff --check
-
-      - name: Pack and test the exact CLI on a disposable Docker host
-        id: final-package
-        if: needs.changelog.outputs.mode == 'prepare'
-        env:
-          ATLAS_CORE_ACCEPTANCE_DISPOSABLE: "1"
-          ATLAS_CORE_ACCEPTANCE_EXECUTION_MODE: "native"
-          IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
-          VERSION: ${{ inputs.version }}
-        run: |
-            rm -f \
-              "release-artifacts/atlas-core-$VERSION.tgz" \
-              release-artifacts/npm-pack.json \
-              release-artifacts/SHA256SUMS
-            npm pack --workspace atlas-core \
-              --pack-destination release-artifacts \
-              --json \
-              --silent > release-artifacts/npm-pack.json
-            package="release-artifacts/atlas-core-$VERSION.tgz"
-            test -f "$package"
-            (
-              cd release-artifacts
-              sha256sum "atlas-core-$VERSION.tgz" > SHA256SUMS
-            )
-            package_integrity="sha512-$(openssl dgst -sha512 -binary "$package" | openssl base64 -A)"
-            echo "package_integrity=$package_integrity" >> "$GITHUB_OUTPUT"
-            bash .github/scripts/test-atlas-core-package.sh "$package" "$VERSION" "$IMAGE_REFERENCE" linux/amd64
-            source .github/scripts/atlas-core-release-files.sh
-            validate_atlas_core_release_paths "Unexpected final release change" < <(git diff --name-only)
-            git diff --check
-            git diff -- "${atlas_core_release_paths[@]}" > release-artifacts/release.diff
-
-      - name: Verify release tag authority
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          bash .github/scripts/require-atlas-core-tag-rulesets.sh \
-            "Both Atlas Core release tag rulesets must remain active."
-
-      - name: Verify immutable release tag
-        if: needs.changelog.outputs.mode == 'publish'
-        env:
-          RELEASE_SHA: ${{ needs.changelog.outputs.release_sha }}
-          VERSION: ${{ inputs.version }}
-        run: bash .github/scripts/verify-atlas-core-release-tag.sh "$VERSION" "$RELEASE_SHA"
-
-      - name: Upload exact approved release
-        id: final-artifact
-        if: needs.changelog.outputs.mode == 'prepare'
+      - name: Upload image identity
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: atlas-core-final-${{ inputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            CHANGELOG.md
-            package-lock.json
-            surfaces/core-cli/package.json
-            surfaces/core-cli/src/package-metadata.ts
-            release-artifacts/
+          name: atlas-core-image-${{ needs.inspect.outputs.version }}-${{ github.run_id }}
+          path: image.json
           if-no-files-found: error
           retention-days: 90
 
-      - name: Promote the reviewed digest to the version tag
-        if: needs.changelog.outputs.mode == 'publish'
-        env:
-          IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
-          PINNED_DIGEST: ${{ steps.image.outputs.digest }}
-          VERSION: ${{ inputs.version }}
-        run: |
-          set -o pipefail
-          final_image="ghcr.io/the-drunken-coder/atlas-core:$VERSION"
-          inspect_error="$(mktemp)"
-          if final_digest="$(
-            docker buildx imagetools inspect "$final_image" --format '{{json .Manifest}}' 2>"$inspect_error" |
-              jq -er '.digest | select(test("^sha256:[0-9a-f]{64}$"))'
-          )"; then
-            if [ "$final_digest" != "$PINNED_DIGEST" ]; then
-              echo "$final_image already identifies $final_digest, not $PINNED_DIGEST." >&2
-              exit 1
-            fi
-          elif grep -Eiq 'manifest unknown|name unknown|not found' "$inspect_error"; then
-            docker buildx imagetools create --tag "$final_image" "$IMAGE_REFERENCE"
-          else
-            cat "$inspect_error" >&2
-            exit 1
-          fi
-          promoted_digest="$(
-            docker buildx imagetools inspect "$final_image" --format '{{json .Manifest}}' |
-              jq -er '.digest | select(test("^sha256:[0-9a-f]{64}$"))'
-          )"
-          if [ "$promoted_digest" != "$PINNED_DIGEST" ]; then
-            echo "$final_image resolved to $promoted_digest after promotion." >&2
-            exit 1
-          fi
-
-      - name: Verify the exact image digest is publicly pullable
-        if: needs.changelog.outputs.mode == 'publish'
-        env:
-          IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
-        run: |
-          docker logout ghcr.io >/dev/null 2>&1 || true
-          images="$(node -p 'JSON.stringify([require("./surfaces/core-cli/package.json").atlasCoreImage])')"
-          while IFS= read -r reference; do
-            if ! docker manifest inspect "$reference" >/dev/null; then
-              echo "$reference is not anonymously pullable." >&2
-              echo "Make every Atlas Core release GHCR package public, then rerun this failed job before publishing npm." >&2
-              exit 1
-            fi
-          done < <(jq -r '.[]' <<< "$images")
-
-      - name: Create or verify draft GitHub Release
-        if: needs.changelog.outputs.mode == 'publish'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ inputs.version }}
-        run: |
-          tag="atlas-core-v$VERSION"
-          package="release-artifacts/atlas-core-$VERSION.tgz"
-          release_exists=false
-          release_is_draft=true
-          view_error="$(mktemp)"
-          if gh release view "$tag" >/dev/null 2>"$view_error"; then
-            release_exists=true
-            release_is_draft="$(gh release view "$tag" --json isDraft --jq .isDraft)"
-            if [ "$(gh release view "$tag" --json name --jq .name)" != "Atlas Core $VERSION" ]; then
-              echo "GitHub Release $tag has an unexpected title." >&2
-              exit 1
-            fi
-            if [ "$(gh release view "$tag" --json isPrerelease --jq .isPrerelease)" != "false" ]; then
-              echo "GitHub Release $tag is unexpectedly marked as a prerelease." >&2
-              exit 1
-            fi
-            if [ "$(gh release view "$tag" --json body --jq .body | sed 's/\r$//')" != \
-                 "$(sed 's/\r$//' release-artifacts/release-notes.md)" ]; then
-              echo "GitHub Release $tag has notes that do not match the reviewed artifact." >&2
-              exit 1
-            fi
-          elif grep -qi 'release not found' "$view_error"; then
-            gh release create "$tag" \
-              --draft \
-              --verify-tag \
-              --title "Atlas Core $VERSION" \
-              --notes-file release-artifacts/release-notes.md
-          else
-            cat "$view_error" >&2
-            exit 1
-          fi
-
-          if [ "$release_exists" = "false" ] || [ "$release_is_draft" = "true" ]; then
-            gh release upload "$tag" \
-              "$package#atlas-core-$VERSION.tgz" \
-              "release-artifacts/SHA256SUMS#SHA256SUMS" \
-              --clobber
-          fi
-
-          expected_assets="$(printf '%s\n' SHA256SUMS "atlas-core-$VERSION.tgz" | sort)"
-          actual_assets="$(gh release view "$tag" --json assets --jq '.assets[].name' | sort)"
-          if [ "$actual_assets" != "$expected_assets" ]; then
-            echo "GitHub Release $tag has an unexpected asset set." >&2
-            exit 1
-          fi
-          downloaded="$(mktemp -d)"
-          gh release download "$tag" \
-            --dir "$downloaded" \
-            --pattern "atlas-core-$VERSION.tgz" \
-            --pattern SHA256SUMS
-          cmp "$package" "$downloaded/atlas-core-$VERSION.tgz"
-          cmp release-artifacts/SHA256SUMS "$downloaded/SHA256SUMS"
-
-      - name: Reverify coordinator before npm publication
-        if: github.ref_type == 'tag' && inputs.coordinator_run_id != ''
-        env:
-          COORDINATOR_RUN_ID: ${{ inputs.coordinator_run_id }}
-          COORDINATOR_RUN_ATTEMPT: ${{ inputs.coordinator_run_attempt }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$COORDINATOR_RUN_ID" |
-            jq -e \
-              --arg run_attempt "$COORDINATOR_RUN_ATTEMPT" \
-              --arg run_id "$COORDINATOR_RUN_ID" \
-              '.id == ($run_id | tonumber) and
-               .run_attempt == ($run_attempt | tonumber) and
-               .status == "in_progress"' >/dev/null
-
-      - name: Bootstrap the npm package
-        if: >-
-          needs.changelog.outputs.recovery != 'true' &&
-          steps.npm.outputs.version_exists == 'false' &&
-          steps.npm.outputs.package_exists == 'false'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          PUBLISH_TAG: ${{ steps.npm.outputs.publish_tag }}
-          VERSION: ${{ inputs.version }}
-        run: |
-          if [ -z "$NODE_AUTH_TOKEN" ]; then
-            echo "The first atlas-core release requires the short-lived NPM_TOKEN bootstrap secret." >&2
-            exit 1
-          fi
-          npm publish "./release-artifacts/atlas-core-$VERSION.tgz" \
-            --access public \
-            --provenance \
-            --tag "$PUBLISH_TAG"
-
-      - name: Publish npm package through trusted publishing
-        if: >-
-          needs.changelog.outputs.recovery != 'true' &&
-          steps.npm.outputs.version_exists == 'false' &&
-          steps.npm.outputs.package_exists == 'true'
-        env:
-          PUBLISH_TAG: ${{ steps.npm.outputs.publish_tag }}
-          VERSION: ${{ inputs.version }}
-        run: |
-          if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "Trusted publication must not receive a token fallback." >&2
-            exit 1
-          fi
-          npm publish "./release-artifacts/atlas-core-$VERSION.tgz" \
-            --access public \
-            --provenance \
-            --tag "$PUBLISH_TAG"
-
-      - name: Verify npm integrity, signatures, and provenance
-        if: needs.changelog.outputs.mode == 'publish'
-        env:
-          EXPECTED_INTEGRITY: ${{ steps.npm.outputs.integrity }}
-          RELEASE_SHA: ${{ needs.changelog.outputs.release_sha }}
-          VERSION: ${{ inputs.version }}
-        run: |
-          attestations="$(mktemp)"
-          for attempt in $(seq 1 60); do
-            published_integrity="$(npm view "atlas-core@$VERSION" dist.integrity 2>/dev/null || true)"
-            attestation_url="$(npm view "atlas-core@$VERSION" dist.attestations.url 2>/dev/null || true)"
-            if [ "$published_integrity" = "$EXPECTED_INTEGRITY" ] && \
-              [ -n "$attestation_url" ] && \
-              curl --connect-timeout 5 --max-time 15 --fail --silent --show-error \
-                "$attestation_url" > "$attestations"; then
-              break
-            fi
-            if [ "$attempt" = 60 ]; then
-              echo "npm did not return the reviewed package and its provenance consistently." >&2
-              exit 1
-            fi
-            sleep 5
-          done
-          node .github/scripts/atlas-core-release.mjs validate-npm-attestation \
-            "$VERSION" \
-            "$EXPECTED_INTEGRITY" \
-            "$attestations" \
-            "https://github.com/the-Drunken-coder/Atlas-Modernization" \
-            ".github/workflows/release-atlas-core.yml" \
-            "refs/tags/atlas-core-v$VERSION" \
-            "$RELEASE_SHA"
-          consumer="$(mktemp -d)"
-          (
-            cd "$consumer"
-            npm init --yes --silent >/dev/null
-            npm install --ignore-scripts "atlas-core@$VERSION" >/dev/null
-            npm audit signatures
-          )
-
-      - name: Publish GitHub Release
-        if: needs.changelog.outputs.mode == 'publish'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          MAKE_LATEST: ${{ steps.npm.outputs.make_latest }}
-          RELEASE_SHA: ${{ needs.changelog.outputs.release_sha }}
-          VERSION: ${{ inputs.version }}
-        run: |
-          tag="atlas-core-v$VERSION"
-          bash .github/scripts/verify-atlas-core-release-tag.sh "$VERSION" "$RELEASE_SHA"
-          if [ "$(gh release view "$tag" --json isDraft --jq .isDraft)" = "true" ]; then
-            if [ "$MAKE_LATEST" = "true" ]; then
-              gh release edit "$tag" --draft=false --latest
-            else
-              gh release edit "$tag" --draft=false --latest=false
-            fi
-          fi
-
-  commit-release:
-    name: Commit approved release
-    if: >-
-      !cancelled() &&
-      needs.changelog.outputs.mode == 'prepare' &&
-      needs.publish.result == 'success'
-    needs: [changelog, publish]
+  package:
+    name: Build exact npm tarball
+    if: needs.inspect.outputs.mode == 'prepare'
+    needs: [inspect, image]
     runs-on: ubuntu-latest
-    environment: release-commit
-    concurrency:
-      group: release-atlas-core-mutator
-      cancel-in-progress: false
-      queue: max
+    timeout-minutes: 30
     permissions:
-      actions: write
-      contents: write
-    outputs:
-      child_run_id: ${{ steps.dispatch.outputs.child_run_id }}
-      child_url: ${{ steps.dispatch.outputs.child_url }}
-      release_sha: ${{ steps.release-state.outputs.release_sha || steps.commit.outputs.release_sha }}
+      contents: read
     steps:
-      - name: Checkout exact approved source
+      - name: Checkout tagged source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
-          ref: ${{ needs.changelog.outputs.source_sha }}
 
-      - name: Download exact approved release
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          artifact-ids: ${{ needs.publish.outputs.release_artifact_id }}
-          path: ${{ runner.temp }}/approved-release
+          node-version-file: .nvmrc
+          package-manager-cache: false
 
-      - name: Validate and stage only approved release files
-        id: approved-release
-        env:
-          EXPECTED_ARTIFACT_DIGEST: ${{ needs.publish.outputs.release_artifact_digest }}
-          EXPECTED_ARTIFACT_ID: ${{ needs.publish.outputs.release_artifact_id }}
-          EXPECTED_PACKAGE_INTEGRITY: ${{ needs.publish.outputs.package_integrity }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SOURCE_SHA: ${{ needs.changelog.outputs.source_sha }}
-          VERSION: ${{ inputs.version }}
+      - name: Install and build release tools
         run: |
-          if [[ ! "$EXPECTED_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]] || \
-             [[ ! "$EXPECTED_ARTIFACT_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || \
-             [[ ! "$EXPECTED_PACKAGE_INTEGRITY" =~ ^sha512-[A-Za-z0-9+/]+={0,2}$ ]]; then
-            echo "The approved release artifact outputs are malformed." >&2
-            exit 1
-          fi
-          artifact="$(mktemp)"
-          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$EXPECTED_ARTIFACT_ID" > "$artifact"
-          release_artifact_name="$(jq -er '.name | select(type == "string")' "$artifact")"
-          artifact_prefix="atlas-core-final-$VERSION-$GITHUB_RUN_ID-"
-          artifact_attempt="${release_artifact_name#"$artifact_prefix"}"
-          if [ "$artifact_attempt" = "$release_artifact_name" ] || \
-             [[ ! "$artifact_attempt" =~ ^[1-9][0-9]*$ ]]; then
-            echo "The approved release artifact name is malformed." >&2
-            exit 1
-          fi
-          jq -e \
-            --arg digest "$EXPECTED_ARTIFACT_DIGEST" \
-            --arg id "$EXPECTED_ARTIFACT_ID" \
-            --arg name "$release_artifact_name" \
-            --arg run_id "$GITHUB_RUN_ID" \
-            --arg source_sha "$SOURCE_SHA" \
-            '.id == ($id | tonumber) and
-             .name == $name and
-             .expired == false and
-             .digest == $digest and
-             .workflow_run.id == ($run_id | tonumber) and
-             .workflow_run.head_sha == $source_sha' \
-            "$artifact" >/dev/null
+          npm ci --workspace @atlas/atlas-core-release --ignore-scripts
+          npm run build --workspace @atlas/atlas-core-release
 
-          artifact_root="$RUNNER_TEMP/approved-release"
-          if find "$artifact_root" -type l -print -quit | grep -q .; then
-            echo "The approved release artifact contains a symbolic link." >&2
-            exit 1
-          fi
-          while IFS= read -r path; do
-            case "$path" in
-              CHANGELOG.md|package-lock.json|surfaces/core-cli/package.json|surfaces/core-cli/src/package-metadata.ts|release-artifacts/atlas-core-"$VERSION".tgz|release-artifacts/npm-pack.json|release-artifacts/SHA256SUMS|release-artifacts/release.diff|release-artifacts/release-notes.md)
-                ;;
-              *)
-                echo "Unexpected approved release artifact file: $path" >&2
-                exit 1
-                ;;
-            esac
-          done < <(find "$artifact_root" -type f -print | sed "s#^$artifact_root/##" | sort)
-          for path in \
-            CHANGELOG.md \
-            package-lock.json \
-            surfaces/core-cli/package.json \
-            surfaces/core-cli/src/package-metadata.ts \
-            release-artifacts/atlas-core-$VERSION.tgz \
-            release-artifacts/npm-pack.json \
-            release-artifacts/SHA256SUMS \
-            release-artifacts/release.diff \
-            release-artifacts/release-notes.md; do
-            test -f "$artifact_root/$path"
-          done
+      - name: Create isolated packaging tree
+        env:
+          IMAGE_REFERENCE: ${{ needs.image.outputs.reference }}
+          SOURCE_SHA: ${{ needs.inspect.outputs.source_sha }}
+          VERSION: ${{ needs.inspect.outputs.version }}
+        run: |
+          set -euo pipefail
+          package_root="$RUNNER_TEMP/atlas-core-package-source"
+          git worktree add --detach "$package_root" "$SOURCE_SHA"
+          node tools/atlas-core-release/dist/cli.js prepare-package \
+            --root "$package_root" --version "$VERSION" --image "$IMAGE_REFERENCE"
           (
-            cd "$artifact_root/release-artifacts"
-            sha256sum --check SHA256SUMS
+            cd "$package_root"
+            npm ci --ignore-scripts
+            npm audit --audit-level=high
+            npm run check --workspace atlas-core
+            mkdir -p "$RUNNER_TEMP/atlas-core-package"
+            npm pack --workspace atlas-core --pack-destination "$RUNNER_TEMP/atlas-core-package" \
+              --json --silent > "$RUNNER_TEMP/atlas-core-package/npm-pack.json"
           )
-          package="$artifact_root/release-artifacts/atlas-core-$VERSION.tgz"
-          actual_package_integrity="sha512-$(openssl dgst -sha512 -binary "$package" | openssl base64 -A)"
-          if [ "$actual_package_integrity" != "$EXPECTED_PACKAGE_INTEGRITY" ]; then
-            echo "The exact package does not match the approved integrity." >&2
-            exit 1
-          fi
-          if [ "$(jq -er .version "$artifact_root/surfaces/core-cli/package.json")" != "$VERSION" ]; then
-            echo "The approved package metadata has the wrong version." >&2
-            exit 1
-          fi
+          package="$RUNNER_TEMP/atlas-core-package/atlas-core-$VERSION.tgz"
+          test -f "$package"
+          PACKAGE="$package" node --input-type=module <<'NODE'
+          import { createHash } from "node:crypto";
+          import { readFileSync, writeFileSync } from "node:fs";
+          const bytes = readFileSync(process.env.PACKAGE);
+          writeFileSync(`${process.env.RUNNER_TEMP}/atlas-core-package/package.json`, `${JSON.stringify({
+            filename: process.env.PACKAGE.split("/").at(-1),
+            sha256: createHash("sha256").update(bytes).digest("hex"),
+            integrity: `sha512-${createHash("sha512").update(bytes).digest("base64")}`
+          }, null, 2)}\n`);
+          NODE
 
-          test -z "$(git status --porcelain=v1 --untracked-files=all)"
-          release_paths=(
-            CHANGELOG.md
-            package-lock.json
-            surfaces/core-cli/package.json
-            surfaces/core-cli/src/package-metadata.ts
-          )
-          for path in "${release_paths[@]}"; do
-            cp "$artifact_root/$path" "$path"
-          done
-          git -c core.hooksPath=/dev/null add -- "${release_paths[@]}"
-          staged="$(git diff --cached --name-only)"
-          if [ -z "$staged" ]; then
-            echo "The approved release produced no commit changes." >&2
-            exit 1
-          fi
-          while IFS= read -r path; do
-            case "$path" in
-              CHANGELOG.md|package-lock.json|surfaces/core-cli/package.json|surfaces/core-cli/src/package-metadata.ts)
-                ;;
-              *)
-                echo "Unexpected staged release file: $path" >&2
-                exit 1
-                ;;
-            esac
-          done <<< "$staged"
-          git diff --cached --check
-          actual_release_diff="$RUNNER_TEMP/release.diff"
-          git diff --cached -- "${release_paths[@]}" > "$actual_release_diff"
-          cmp "$artifact_root/release-artifacts/release.diff" "$actual_release_diff"
-          test -z "$(git diff --name-only)"
-          test -z "$(git ls-files --others --exclude-standard)"
-          echo "release_artifact_name=$release_artifact_name" >> "$GITHUB_OUTPUT"
-
-      - name: Select release commit state
-        id: release-state
-        env:
-          SOURCE_SHA: ${{ needs.changelog.outputs.source_sha }}
-          VERSION: ${{ inputs.version }}
-        run: |
-          git fetch origin main --tags
-          tag="atlas-core-v$VERSION"
-          tag_object_sha=
-          release_sha=
-          while read -r object_sha ref; do
-            case "$ref" in
-              "refs/tags/$tag") tag_object_sha="$object_sha" ;;
-              "refs/tags/$tag^{}") release_sha="$object_sha" ;;
-            esac
-          done < <(git ls-remote origin "refs/tags/$tag" "refs/tags/$tag^{}")
-
-          if [ -z "$tag_object_sha" ]; then
-            if [ "$(git rev-parse origin/main)" != "$SOURCE_SHA" ]; then
-              echo "main moved after release approval. Start a new release run." >&2
-              exit 1
-            fi
-            echo "release_sha=" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          if [ -z "$release_sha" ]; then
-            echo "$tag is not the annotated Atlas Core release tag." >&2
-            exit 1
-          fi
-          tag_contents="$(git cat-file -p "$tag_object_sha")"
-          if [ "$(sed -n '1p' <<< "$tag_contents")" != "object $release_sha" ] || \
-             [ "$(sed -n '2p' <<< "$tag_contents")" != "type commit" ] || \
-             [ "$(sed -n '3p' <<< "$tag_contents")" != "tag $tag" ]; then
-            echo "$tag does not directly identify the Atlas Core release commit." >&2
-            exit 1
-          fi
-          if ! git merge-base --is-ancestor "$release_sha" origin/main; then
-            echo "$tag is not reachable from main." >&2
-            exit 1
-          fi
-          if [ "$(git rev-list --parents -n 1 "$release_sha")" != "$release_sha $SOURCE_SHA" ]; then
-            echo "$tag is not the release commit created from the approved source." >&2
-            exit 1
-          fi
-          if [ "$(git show -s --format=%s "$release_sha")" != "chore(release): atlas-core v$VERSION" ]; then
-            echo "$tag does not identify the Atlas Core release commit." >&2
-            exit 1
-          fi
-          while IFS= read -r path; do
-            case "$path" in
-              CHANGELOG.md|package-lock.json|surfaces/core-cli/package.json|surfaces/core-cli/src/package-metadata.ts)
-                ;;
-              *)
-                echo "The existing release commit changed an unexpected file: $path" >&2
-                exit 1
-                ;;
-            esac
-          done < <(git diff --name-only "$release_sha^..$release_sha")
-          if ! git diff --quiet "$release_sha" -- .; then
-            echo "The approved release artifact does not match $tag." >&2
-            git diff --stat "$release_sha" -- . >&2
-            exit 1
-          fi
-          echo "Reusing exact release commit $release_sha from immutable tag $tag."
-          echo "release_sha=$release_sha" >> "$GITHUB_OUTPUT"
-
-      - name: Reverify release tag authority
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          rulesets="$(mktemp)"
-          gh api "repos/$GITHUB_REPOSITORY/rulesets?targets=tag&per_page=100" > "$rulesets"
-          creation_id="$(
-            jq -er '.[] | select(.name == "Atlas Core release tag creation" and .enforcement == "active") | .id' \
-              "$rulesets" | head -n 1
-          )"
-          immutability_id="$(
-            jq -er '.[] | select(.name == "Atlas Core release tag immutability" and .enforcement == "active") | .id' \
-              "$rulesets" | head -n 1
-          )"
-          creation="$(mktemp)"
-          immutability="$(mktemp)"
-          gh api "repos/$GITHUB_REPOSITORY/rulesets/$creation_id" > "$creation"
-          gh api "repos/$GITHUB_REPOSITORY/rulesets/$immutability_id" > "$immutability"
-          jq -e '
-            .name == "Atlas Core release tag creation" and
-            .target == "tag" and
-            .enforcement == "active" and
-            .conditions.ref_name.include == ["refs/tags/atlas-core-v*"] and
-            .conditions.ref_name.exclude == [] and
-            ([.rules[].type] | index("creation") != null) and
-            ([.rules[].type] | index("update") == null) and
-            ([.rules[].type] | index("deletion") == null)
-          ' "$creation" >/dev/null
-          jq -e '
-            .name == "Atlas Core release tag immutability" and
-            .target == "tag" and
-            .enforcement == "active" and
-            .conditions.ref_name.include == ["refs/tags/atlas-core-v*"] and
-            .conditions.ref_name.exclude == [] and
-            ([.rules[].type] | index("creation") == null) and
-            ([.rules[].type] | index("update") != null) and
-            ([.rules[].type] | index("deletion") != null)
-          ' "$immutability" >/dev/null
-
-      - name: Mint protected release credential
-        id: release-token
-        if: steps.release-state.outputs.release_sha == ''
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          client-id: ${{ vars.ATLAS_CORE_RELEASE_APP_CLIENT_ID }}
-          private-key: ${{ secrets.ATLAS_CORE_RELEASE_APP_PRIVATE_KEY }}
-          permission-contents: write
-
-      - name: Commit and atomically tag release
-        id: commit
-        if: steps.release-state.outputs.release_sha == ''
-        env:
-          GH_TOKEN: ${{ steps.release-token.outputs.token }}
-          VERSION: ${{ inputs.version }}
-        run: |
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git -c core.hooksPath=/dev/null -c commit.gpgSign=false \
-            commit -m "chore(release): atlas-core v$VERSION"
-          release_sha="$(git rev-parse HEAD)"
-          tag="atlas-core-v$VERSION"
-          git -c core.hooksPath=/dev/null -c tag.gpgSign=false \
-            tag --annotate "$tag" --message "Atlas Core $VERSION" "$release_sha"
-          gh auth setup-git
-          git push --atomic origin HEAD:main "refs/tags/$tag:refs/tags/$tag"
-          echo "release_sha=$release_sha" >> "$GITHUB_OUTPUT"
-
-      - name: Dispatch immutable tag publication
-        id: dispatch
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ inputs.version }}
-        run: |
-          tag="atlas-core-v$VERSION"
-          request="$(
-            jq -n \
-              --arg coordinator_run_id "$GITHUB_RUN_ID" \
-              --arg coordinator_run_attempt "$GITHUB_RUN_ATTEMPT" \
-              --arg ref "$tag" \
-              --arg version "$VERSION" \
-              '{
-                ref: $ref,
-                inputs: {
-                  version: $version,
-                  coordinator_run_id: $coordinator_run_id,
-                  coordinator_run_attempt: $coordinator_run_attempt
-                },
-                return_run_details: true
-              }'
-          )"
-          response="$(
-            gh api \
-              --method POST \
-              "repos/$GITHUB_REPOSITORY/actions/workflows/release-atlas-core.yml/dispatches" \
-              --input - <<< "$request"
-          )"
-          child_run_id="$(jq -er '.workflow_run_id | tostring | select(test("^[0-9]+$"))' <<< "$response")"
-          child_url="$(jq -er '.html_url | select(type == "string" and length > 0)' <<< "$response")"
-          echo "child_run_id=$child_run_id" >> "$GITHUB_OUTPUT"
-          echo "child_url=$child_url" >> "$GITHUB_OUTPUT"
-          echo "Queued Atlas Core $VERSION publication from $tag as run $child_run_id."
-          {
-            printf '## Atlas Core %s release commit created\n\n' "$VERSION"
-            printf -- '- Immutable tag: %s\n' "$tag"
-            printf -- '- Immutable tag run: %s\n' "$child_url"
-            printf '%s\n' '- The immutable tag run will publish the exact authorized package automatically.'
-            printf '%s\n' '- This coordinator will wait for that exact run and report its result.'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Record approved publication
-        env:
-          CHILD_RUN_ID: ${{ steps.dispatch.outputs.child_run_id }}
-          PACKAGE_INTEGRITY: ${{ needs.publish.outputs.package_integrity }}
-          RELEASE_ARTIFACT_DIGEST: ${{ needs.publish.outputs.release_artifact_digest }}
-          RELEASE_ARTIFACT_ID: ${{ needs.publish.outputs.release_artifact_id }}
-          RELEASE_ARTIFACT_NAME: ${{ steps.approved-release.outputs.release_artifact_name }}
-          RELEASE_SHA: ${{ steps.release-state.outputs.release_sha || steps.commit.outputs.release_sha }}
-          SOURCE_SHA: ${{ needs.changelog.outputs.source_sha }}
-          VERSION: ${{ inputs.version }}
-        run: |
-          authorization_root="$RUNNER_TEMP/publication-authorization"
-          mkdir -p "$authorization_root"
-          jq -n \
-            --arg child_run_id "$CHILD_RUN_ID" \
-            --arg coordinator_run_attempt "$GITHUB_RUN_ATTEMPT" \
-            --arg coordinator_run_id "$GITHUB_RUN_ID" \
-            --arg package_integrity "$PACKAGE_INTEGRITY" \
-            --arg release_artifact_digest "$RELEASE_ARTIFACT_DIGEST" \
-            --arg release_artifact_id "$RELEASE_ARTIFACT_ID" \
-            --arg release_artifact_name "$RELEASE_ARTIFACT_NAME" \
-            --arg release_sha "$RELEASE_SHA" \
-            --arg repository "$GITHUB_REPOSITORY" \
-            --arg source_sha "$SOURCE_SHA" \
-            --arg tag "atlas-core-v$VERSION" \
-            --arg version "$VERSION" \
-            '{
-              schema: 3,
-              repository: $repository,
-              workflow: "release-atlas-core.yml",
-              coordinator_run_id: $coordinator_run_id,
-              coordinator_run_attempt: $coordinator_run_attempt,
-              child_run_id: $child_run_id,
-              version: $version,
-              tag: $tag,
-              source_sha: $source_sha,
-              release_sha: $release_sha,
-              release_artifact_id: $release_artifact_id,
-              release_artifact_name: $release_artifact_name,
-              release_artifact_digest: $release_artifact_digest,
-              package_integrity: $package_integrity
-            }' > "$authorization_root/publication-authorization.json"
-
-      - name: Upload approved publication
+      - name: Upload exact package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: atlas-core-publication-authorization-${{ inputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/publication-authorization/publication-authorization.json
+          name: atlas-core-package-${{ needs.inspect.outputs.version }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/atlas-core-package/
           if-no-files-found: error
           retention-days: 90
 
-  await-publication:
-    name: Await immutable tag publication
-    if: >-
-      !cancelled() &&
-      needs.changelog.outputs.mode == 'prepare' &&
-      needs.commit-release.outputs.child_run_id != ''
-    needs: [changelog, commit-release]
-    runs-on: ubuntu-latest
+  docker-acceptance:
+    name: Docker acceptance (${{ matrix.platform }})
+    if: needs.inspect.outputs.mode == 'prepare'
+    needs: [inspect, image, package]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     permissions:
-      actions: read
-      checks: read
       contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            platform: linux/amd64
+            architecture: amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            architecture: arm64
     steps:
-      - name: Wait for tag publication
-        id: wait
-        env:
-          CHILD_RUN_ID: ${{ needs.commit-release.outputs.child_run_id }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh run watch "$CHILD_RUN_ID" --repo "$GITHUB_REPOSITORY" --exit-status --interval 10
+      - name: Checkout tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - name: Summarize coordinated publication
-        if: always()
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+
+      - name: Download exact package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: atlas-core-package-${{ needs.inspect.outputs.version }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/atlas-core-package
+
+      - name: Sign in for candidate pull
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Exercise exact candidate lifecycle
         env:
-          CHILD_URL: ${{ needs.commit-release.outputs.child_url }}
-          VERSION: ${{ inputs.version }}
-          WAIT_OUTCOME: ${{ steps.wait.outcome }}
+          ATLAS_CORE_ACCEPTANCE_DISPOSABLE: "1"
+          ATLAS_CORE_ACCEPTANCE_EXECUTION_MODE: native
+          ATLAS_CORE_ACCEPTANCE_ARTIFACTS: ${{ runner.temp }}/acceptance
+          IMAGE_REFERENCE: ${{ needs.image.outputs.reference }}
+          PLATFORM: ${{ matrix.platform }}
+          VERSION: ${{ needs.inspect.outputs.version }}
         run: |
-          printf '## Atlas Core %s publication\n\n' "$VERSION" >> "$GITHUB_STEP_SUMMARY"
-          if [ -n "$CHILD_URL" ]; then
-            printf -- '- Immutable tag run: %s\n' "$CHILD_URL" >> "$GITHUB_STEP_SUMMARY"
-          fi
-          if [ "$WAIT_OUTCOME" = "success" ]; then
-            printf '%s\n' '- GHCR, npm, provenance, and the GitHub Release passed final verification.' >> "$GITHUB_STEP_SUMMARY"
-          else
-            printf '%s\n' '- Immutable tag publication did not finish successfully. Open the linked run for the failing check.' >> "$GITHUB_STEP_SUMMARY"
-          fi
+          package="$RUNNER_TEMP/atlas-core-package/atlas-core-$VERSION.tgz"
+          bash .github/scripts/test-atlas-core-package.sh "$package" "$VERSION" "$IMAGE_REFERENCE" "$PLATFORM"
+          tar -C "$RUNNER_TEMP/acceptance" -czf "$RUNNER_TEMP/docker-${{ matrix.architecture }}.tgz" .
 
-  stop-publication:
-    name: Stop publication after coordinator failure
+      - name: Upload Docker evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: atlas-core-docker-${{ matrix.architecture }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/docker-${{ matrix.architecture }}.tgz
+          if-no-files-found: error
+          retention-days: 90
+
+  package-acceptance:
+    name: Packed consumer (${{ matrix.name }})
+    if: needs.inspect.outputs.mode == 'prepare'
+    needs: [inspect, package]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            name: linux-x64
+            platform: linux
+            architecture: x64
+          - runner: ubuntu-24.04-arm
+            name: linux-arm64
+            platform: linux
+            architecture: arm64
+          - runner: macos-15-intel
+            name: macos-x64
+            platform: darwin
+            architecture: x64
+          - runner: macos-15
+            name: macos-arm64
+            platform: darwin
+            architecture: arm64
+    steps:
+      - name: Checkout tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+
+      - name: Download exact package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: atlas-core-package-${{ needs.inspect.outputs.version }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/atlas-core-package
+
+      - name: Exercise exact packed consumer
+        env:
+          ATLAS_CORE_EXPECTED_PLATFORM: ${{ matrix.platform }}
+          ATLAS_CORE_EXPECTED_ARCHITECTURE: ${{ matrix.architecture }}
+          ATLAS_CORE_EXPECTED_EXECUTION: native
+          ATLAS_CORE_PACKED_CLI_EVIDENCE: ${{ runner.temp }}/portable-${{ matrix.name }}.json
+          ATLAS_CORE_PACKAGE_TARBALL: ${{ runner.temp }}/atlas-core-package/atlas-core-${{ needs.inspect.outputs.version }}.tgz
+        run: node surfaces/core-cli/test/portable-packed-cli.mjs
+
+      - name: Upload packed-consumer evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: atlas-core-portable-${{ matrix.name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/portable-${{ matrix.name }}.json
+          if-no-files-found: error
+          retention-days: 90
+
+  assemble:
+    name: Seal candidate identity
+    if: needs.inspect.outputs.mode == 'prepare'
+    needs: [inspect, notes, image, package, docker-acceptance, package-acceptance]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      artifact_digest: sha256:${{ steps.upload.outputs.artifact-digest }}
+      candidate_identity: ${{ steps.manifest.outputs.candidate_identity }}
+    steps:
+      - name: Checkout tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+
+      - name: Install and build release tools
+        run: |
+          npm ci --workspace @atlas/atlas-core-release --ignore-scripts
+          npm run build --workspace @atlas/atlas-core-release
+
+      - name: Download package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: atlas-core-package-${{ needs.inspect.outputs.version }}-${{ github.run_id }}
+          path: candidate/package
+
+      - name: Download notes
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: atlas-core-notes-${{ needs.inspect.outputs.version }}-${{ github.run_id }}
+          path: candidate/notes
+
+      - name: Download Docker evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: atlas-core-docker-*-${{ github.run_id }}-*
+          path: candidate/evidence-artifacts
+
+      - name: Download packed-consumer evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: atlas-core-portable-*-${{ github.run_id }}-*
+          path: candidate/evidence-artifacts
+
+      - name: Select latest acceptance evidence
+        run: |
+          set -euo pipefail
+          mkdir -p candidate/evidence
+          for name in docker-amd64 docker-arm64; do
+            directory="$(find candidate/evidence-artifacts -mindepth 1 -maxdepth 1 -type d \
+              -name "atlas-core-$name-$GITHUB_RUN_ID-*" -print | sort -V | tail -n 1)"
+            test -n "$directory"
+            cp "$directory/$name.tgz" "candidate/evidence/$name.tgz"
+          done
+          for name in portable-linux-x64 portable-linux-arm64 portable-macos-x64 portable-macos-arm64; do
+            directory="$(find candidate/evidence-artifacts -mindepth 1 -maxdepth 1 -type d \
+              -name "atlas-core-$name-$GITHUB_RUN_ID-*" -print | sort -V | tail -n 1)"
+            test -n "$directory"
+            cp "$directory/$name.json" "candidate/evidence/$name.json"
+          done
+
+      - name: Create and verify manifest
+        id: manifest
+        env:
+          IMAGE_DIGEST: ${{ needs.image.outputs.digest }}
+          SOURCE_SHA: ${{ needs.inspect.outputs.source_sha }}
+          TAG: ${{ needs.inspect.outputs.tag }}
+          TAG_OBJECT: ${{ needs.inspect.outputs.tag_object }}
+          VERSION: ${{ needs.inspect.outputs.version }}
+        run: |
+          set -euo pipefail
+          bundle="$RUNNER_TEMP/release-bundle"
+          mkdir -p "$bundle"
+          cp "candidate/package/atlas-core-$VERSION.tgz" "$bundle/"
+          cp candidate/notes/release-notes.md "$bundle/"
+          cp candidate/evidence/* "$bundle/"
+          evidence_json="$(find "$bundle" -maxdepth 1 -type f \( -name 'docker-*.tgz' -o -name 'portable-*.json' \) -print | sort | jq -Rsc 'split("\n") | map(select(length > 0))')"
+          jq -n \
+            --arg version "$VERSION" --arg repository "$GITHUB_REPOSITORY" --arg sourceSha "$SOURCE_SHA" \
+            --arg tagName "$TAG" --arg tagObject "$TAG_OBJECT" --arg imageRepository "$IMAGE_REPOSITORY" \
+            --arg imageDigest "$IMAGE_DIGEST" --arg packagePath "$bundle/atlas-core-$VERSION.tgz" \
+            --arg notesPath "$bundle/release-notes.md" --argjson evidencePaths "$evidence_json" \
+            --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+            '{version: $version, repository: $repository, sourceSha: $sourceSha, tagName: $tagName,
+              tagObject: $tagObject, imageRepository: $imageRepository, imageDigest: $imageDigest,
+              platforms: ["linux/amd64", "linux/arm64"], packagePath: $packagePath, notesPath: $notesPath,
+              evidencePaths: $evidencePaths, runId: $runId, runAttempt: $runAttempt}' \
+            > "$RUNNER_TEMP/manifest-spec.json"
+          node tools/atlas-core-release/dist/cli.js create-manifest \
+            --spec "$RUNNER_TEMP/manifest-spec.json" --output "$bundle/release-manifest.json"
+          (cd "$bundle" && sha256sum -- * > SHA256SUMS)
+          node tools/atlas-core-release/dist/cli.js verify-bundle \
+            --manifest "$bundle/release-manifest.json" --root "$bundle"
+          candidate_identity="$(node --input-type=module - "$bundle/release-manifest.json" <<'NODE'
+          import { readFileSync } from "node:fs";
+          import { candidateIdentity } from "./tools/atlas-core-release/dist/release.js";
+          process.stdout.write(candidateIdentity(JSON.parse(readFileSync(process.argv[2], "utf8"))));
+          NODE
+          )"
+          echo "candidate_identity=$candidate_identity" >> "$GITHUB_OUTPUT"
+
+      - name: Upload exact candidate
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: atlas-core-candidate-${{ needs.inspect.outputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-bundle/
+          if-no-files-found: error
+          retention-days: 90
+
+  review:
+    name: Present exact publication candidate
     if: >-
-      always() &&
-      needs.changelog.outputs.mode == 'prepare' &&
-      needs.commit-release.outputs.child_run_id != '' &&
-      (cancelled() || needs.await-publication.result != 'success')
-    needs: [changelog, commit-release, await-publication]
+      always() && needs.inspect.result == 'success' && needs.inspect.outputs.mode != 'complete' &&
+      (needs.inspect.outputs.mode == 'sealed' || needs.assemble.result == 'success')
+    needs: [inspect, assemble]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      actions: write
       contents: read
     steps:
-      - name: Cancel the exact immutable tag run
+      - name: Download prepared candidate
+        if: needs.inspect.outputs.mode == 'prepare'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: atlas-core-candidate-${{ needs.inspect.outputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: candidate
+
+      - name: Download sealed candidate
+        if: needs.inspect.outputs.mode == 'sealed'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: atlas-core-sealed-${{ needs.inspect.outputs.version }}-${{ github.run_id }}
+          path: candidate
+
+      - name: Write approval summary
         env:
-          CHILD_RUN_ID: ${{ needs.commit-release.outputs.child_run_id }}
+          ARTIFACT_DIGEST: ${{ needs.assemble.outputs.artifact_digest }}
+          CANDIDATE_IDENTITY: ${{ needs.assemble.outputs.candidate_identity }}
+          MODE: ${{ needs.inspect.outputs.mode }}
+          VERSION: ${{ needs.inspect.outputs.version }}
+        run: |
+          artifacts_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID#artifacts"
+          image_url="$GITHUB_SERVER_URL/${GITHUB_REPOSITORY_OWNER}?tab=packages&repo_name=${GITHUB_REPOSITORY#*/}"
+          # shellcheck disable=SC2016
+          {
+            printf '## Approve Atlas Core %s candidate\n\n' "$VERSION"
+            printf -- '- Mode: `%s`\n' "$MODE"
+            printf -- '- Source: `%s`\n' "${{ needs.inspect.outputs.source_sha }}"
+            printf -- '- Tag: `%s`\n' "${{ needs.inspect.outputs.tag }}"
+            printf -- '- Notes and manifest: [candidate artifact](%s)\n' "$artifacts_url"
+            printf -- '- Image: [`%s@%s`](%s)\n' "$(jq -r .image.repository candidate/release-manifest.json)" "$(jq -r .image.digest candidate/release-manifest.json)" "$image_url"
+            printf -- '- Package: [`%s`](%s) (`%s`)\n' "$(jq -r .package.filename candidate/release-manifest.json)" "$artifacts_url" "$(jq -r .package.sha256 candidate/release-manifest.json)"
+            printf -- '- Candidate identity: `%s`\n' "${CANDIDATE_IDENTITY:-sealed in GitHub Release}"
+            printf -- '- Actions artifact digest: `%s`\n' "${ARTIFACT_DIGEST:-recovered from sealed bundle}"
+            printf -- '- Acceptance evidence: [%s](%s)\n' "$(jq -r '.acceptance | keys | join(", ")' candidate/release-manifest.json)" "$artifacts_url"
+            printf '%s\n' '- Approval publishes or reconciles only this exact candidate.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    name: Approve and reconcile publication
+    if: >-
+      always() && needs.inspect.result == 'success' && needs.review.result == 'success' &&
+      needs.inspect.outputs.mode != 'complete' &&
+      (needs.inspect.outputs.mode == 'sealed' || needs.assemble.result == 'success')
+    needs: [inspect, assemble, review]
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    environment:
+      name: release-publish
+    concurrency:
+      group: release-atlas-core-publication
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      attestations: read
+      contents: write
+      id-token: write
+      packages: write
+    steps:
+      - name: Checkout tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node and npm trusted publishing
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Install release tools and exact npm
+        run: |
+          npm ci --workspace @atlas/atlas-core-release --ignore-scripts
+          npm run build --workspace @atlas/atlas-core-release
+          npm install --global --ignore-scripts "npm@$NPM_VERSION"
+          npm --version | grep -Fx "$NPM_VERSION"
+
+      - name: Download prepared candidate
+        if: needs.inspect.outputs.mode == 'prepare'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: atlas-core-candidate-${{ needs.inspect.outputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: bundle
+
+      - name: Download sealed candidate
+        if: needs.inspect.outputs.mode == 'sealed'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: atlas-core-sealed-${{ needs.inspect.outputs.version }}-${{ github.run_id }}
+          path: bundle
+
+      - name: Revalidate tag, workflow, and candidate identity
+        env:
+          EXPECTED_ARTIFACT_DIGEST: ${{ needs.inspect.outputs.mode == 'prepare' && needs.assemble.outputs.artifact_digest || needs.inspect.outputs.handoff_digest }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MODE: ${{ needs.inspect.outputs.mode }}
+          SOURCE_SHA: ${{ needs.inspect.outputs.source_sha }}
+          VERSION: ${{ needs.inspect.outputs.version }}
+        run: |
+          set -euo pipefail
+          git fetch origin main:refs/remotes/origin/main --tags --force
+          tag_object="$(node tools/atlas-core-release/dist/cli.js validate-release-tag --version "$VERSION" --source-sha "$SOURCE_SHA")"
+          test "$tag_object" = "${{ needs.inspect.outputs.tag_object }}"
+          git merge-base --is-ancestor "$SOURCE_SHA" origin/main
+          node tools/atlas-core-release/dist/cli.js verify-bundle --manifest bundle/release-manifest.json --root bundle
+          jq -e --arg repository "$GITHUB_REPOSITORY" --arg source "$SOURCE_SHA" \
+            --arg tag "${{ needs.inspect.outputs.tag }}" --arg tag_object "$tag_object" \
+            '.release.repository == $repository and .release.source_sha == $source and
+             .release.tag_name == $tag and .release.tag_object == $tag_object' bundle/release-manifest.json >/dev/null
+          test "$(jq -r .preparation.run_id bundle/release-manifest.json)" != ""
+          [[ "$EXPECTED_ARTIFACT_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          if [ "$MODE" = "prepare" ]; then
+            artifact_name="atlas-core-candidate-$VERSION-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          else
+            artifact_name="atlas-core-sealed-$VERSION-$GITHUB_RUN_ID"
+          fi
+          actual_artifact_digest="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" \
+            --jq ".artifacts[] | select(.name == \"$artifact_name\" and .expired == false) | .digest")"
+          test "$actual_artifact_digest" = "$EXPECTED_ARTIFACT_DIGEST"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" | jq -e --arg sha "$SOURCE_SHA" \
+            '.head_sha == $sha and .path == ".github/workflows/release-atlas-core.yml"' >/dev/null
+          if [ "$MODE" = "prepare" ]; then
+            test "$(jq -r .preparation.run_id bundle/release-manifest.json)" = "$GITHUB_RUN_ID"
+            test "$(jq -r .preparation.run_attempt bundle/release-manifest.json)" = "$GITHUB_RUN_ATTEMPT"
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Sign in to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Reconcile and verify exact publication
+        env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          conclusion="$(gh run view "$CHILD_RUN_ID" --json conclusion --jq '.conclusion // ""')"
-          if [ -n "$conclusion" ]; then
-            if [ "$conclusion" = "success" ]; then
-              echo "Immutable tag run $CHILD_RUN_ID completed before it could be cancelled." >&2
-              exit 1
-            fi
-            echo "Immutable tag run $CHILD_RUN_ID already ended with $conclusion."
-            exit 0
+          node tools/atlas-core-release/dist/cli.js reconcile-publication \
+            --manifest bundle/release-manifest.json \
+            --root bundle \
+            > "$RUNNER_TEMP/publication-result.json"
+          jq -e '.complete == true and .operations == []' "$RUNNER_TEMP/publication-result.json" >/dev/null
+
+  verify-completed:
+    name: Verify completed release without mutation
+    if: needs.inspect.outputs.mode == 'complete'
+    needs: inspect
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      attestations: read
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Install release tools and exact npm
+        run: |
+          npm ci --workspace @atlas/atlas-core-release --ignore-scripts
+          npm run build --workspace @atlas/atlas-core-release
+          npm install --global --ignore-scripts "npm@$NPM_VERSION"
+
+      - name: Download immutable release bundle
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.inspect.outputs.tag }}
+        run: gh release download "$TAG" --dir bundle
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Verify public package, image, and release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node tools/atlas-core-release/dist/cli.js verify-completed-publication \
+            --manifest bundle/release-manifest.json \
+            --root bundle \
+            > "$RUNNER_TEMP/publication-result.json"
+          jq -e '.complete == true and .operations == []' "$RUNNER_TEMP/publication-result.json" >/dev/null
+          printf '## Atlas Core %s is complete\n\nAll sealed bytes and public identities match. No mutation was performed.\n' \
+            "${{ needs.inspect.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
+
+  report:
+    name: Report observed final state
+    if: always() && needs.inspect.result == 'success'
+    needs: [inspect, publish, verify-completed]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Report completion or partial publication
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MODE: ${{ needs.inspect.outputs.mode }}
+          PUBLISH_RESULT: ${{ needs.publish.result }}
+          TAG: ${{ needs.inspect.outputs.tag }}
+          VERIFY_COMPLETED_RESULT: ${{ needs.verify-completed.result }}
+          VERSION: ${{ needs.inspect.outputs.version }}
+        run: |
+          release=absent
+          npm_state=absent
+          image=absent
+          if gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" > "$RUNNER_TEMP/release.json" 2>/dev/null; then
+            release="$(jq -r '
+              if .draft then "unsealed draft"
+              elif (.immutable and .prerelease) then "sealed immutable prerelease"
+              elif (.immutable and (.prerelease | not)) then "published immutable release"
+              else "published but mutable conflict"
+              end
+            ' "$RUNNER_TEMP/release.json")"
           fi
-          gh run cancel "$CHILD_RUN_ID" || true
-          for _ in {1..30}; do
-            state="$(gh run view "$CHILD_RUN_ID" --json status,conclusion)"
-            status="$(jq -r .status <<< "$state")"
-            conclusion="$(jq -r '.conclusion // ""' <<< "$state")"
-            if [ "$status" = "completed" ]; then
-              if [ "$conclusion" = "success" ]; then
-                echo "Immutable tag run $CHILD_RUN_ID published before cancellation completed." >&2
-                exit 1
-              fi
-              echo "Immutable tag run $CHILD_RUN_ID ended with $conclusion."
-              exit 0
+          if npm view "atlas-core@$VERSION" dist.integrity >/dev/null 2>&1; then npm_state=published; fi
+          if docker manifest inspect "$IMAGE_REPOSITORY:$VERSION" >/dev/null 2>&1; then image=published; fi
+          verification=failed
+          if { [ "$MODE" = complete ] && [ "$VERIFY_COMPLETED_RESULT" = success ]; } || \
+             { [ "$MODE" != complete ] && [ "$PUBLISH_RESULT" = success ]; }; then
+            verification=passed
+          fi
+          {
+            printf '## Atlas Core %s observed state\n\n' "$VERSION"
+            printf -- '- GitHub Release: %s\n' "$release"
+            printf -- '- GHCR version tag: %s\n' "$image"
+            printf -- '- npm version: %s\n' "$npm_state"
+            printf -- '- Full verification: %s\n' "$verification"
+            if [ "$verification" = passed ] && [ "$release" = "published immutable release" ] && \
+               [ "$image" = published ] && [ "$npm_state" = published ]; then
+              printf '%s\n' '- Next action: none; a future dispatch performs read-only verification.'
+            else
+              # shellcheck disable=SC2016
+              printf -- '- Next action: dispatch Release Atlas Core from `%s` to reconcile the partial state.\n' "$TAG"
             fi
-            sleep 2
-          done
-          gh api --method POST "repos/$GITHUB_REPOSITORY/actions/runs/$CHILD_RUN_ID/force-cancel"
-          for _ in {1..30}; do
-            state="$(gh run view "$CHILD_RUN_ID" --json status,conclusion)"
-            status="$(jq -r .status <<< "$state")"
-            conclusion="$(jq -r '.conclusion // ""' <<< "$state")"
-            if [ "$status" = "completed" ]; then
-              if [ "$conclusion" = "success" ]; then
-                echo "Immutable tag run $CHILD_RUN_ID published before force cancellation completed." >&2
-                exit 1
-              fi
-              echo "Immutable tag run $CHILD_RUN_ID ended with $conclusion."
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "Immutable tag run $CHILD_RUN_ID did not reach a terminal cancelled state." >&2
-          exit 1
+          } >> "$GITHUB_STEP_SUMMARY"

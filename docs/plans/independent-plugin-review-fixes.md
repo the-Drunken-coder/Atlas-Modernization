@@ -1,5 +1,8 @@
 # Independent Plugin review fixes
 
+> Historical implementation record. Its release commands describe the workflow that existed during this work and are
+> not operational guidance. Use `docs/atlas-core/RELEASING.md` and the current workspace checks for Atlas Core releases.
+
 Reviewed baseline: `719b7ac59c144dcee824cc55f24264ebdf49b772`.
 Scope: confirmed defects from the independent reviews, verified against source and isolated reproductions. No release, deployment, PR, or push is part of this repair.
 
@@ -44,7 +47,7 @@ Coverage includes persistence/trust, runtime contracts, transaction/crash recove
 ## Final validation
 
 - Node 24 `npm run check --workspace atlas-core`: passed; 389 tests in 17 files, formatting, lint, typecheck, build, and packed-install check.
-- `node --test .github/scripts/atlas-core-release.test.mjs scripts/plugin-release*.test.mjs`: 34 tests passed.
+- The then-current Core and Plugin release script suites passed 34 tests.
 - Release workflow YAML and Actionlint passed. Actionlint 1.7.11 needed its known `queue` schema warning excluded; no other diagnostics were suppressed.
 - `git diff --check`: passed.
 - Fresh runtime and recovery/publication reviews completed; confirmed follow-up findings were fixed and rechecked.
@@ -70,7 +73,7 @@ Reviewed PR #339 at `108c19c1c8dbff688fe0a4752e66f8008bbe9a17`; the live head ma
 
 Validation on the repaired worktree:
 
-- `node --test .github/scripts/atlas-core-release.test.mjs scripts/plugin-release*.test.mjs`: 42 tests passed after the final publisher fix.
+- The then-current Core and Plugin release script suites passed 42 tests after the final publisher fix.
 - `git diff --check`: passed.
 - Node 24 `npm run check --workspace atlas-core`: passed, including 397 tests across 17 files, formatting, lint, typecheck, build, and packed-install check.
 - Release workflow Actionlint passed with only the known unsupported `concurrency.queue` schema diagnostic excluded.

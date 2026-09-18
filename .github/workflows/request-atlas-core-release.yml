@@ -1,0 +1,244 @@
+name: Request Atlas Core release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Stable Atlas Core SemVer without a leading v
+        required: true
+        type: string
+      source_sha:
+        description: Optional full source commit SHA; defaults to this main dispatch
+        required: false
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: request-atlas-core-release
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Pin source and verify Core CI
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      source_sha: ${{ steps.source.outputs.source_sha }}
+      tag: ${{ steps.source.outputs.tag }}
+    steps:
+      - name: Require a main dispatch
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "Request Atlas Core releases from main. The optional source SHA may select an older commit." >&2
+          exit 1
+
+      - name: Checkout repository history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+
+      - name: Install and build release tools
+        run: |
+          npm ci --workspace @atlas/atlas-core-release --ignore-scripts
+          npm run build --workspace @atlas/atlas-core-release
+
+      - name: Pin requested source
+        id: source
+        env:
+          REQUESTED_SHA: ${{ inputs.source_sha }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          source_sha="${REQUESTED_SHA:-$GITHUB_SHA}"
+          if [[ ! "$source_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "source_sha must be a full lowercase commit SHA." >&2
+            exit 1
+          fi
+          git fetch origin main:refs/remotes/origin/main --tags --force
+          node tools/atlas-core-release/dist/cli.js validate-version --version "$VERSION"
+          node tools/atlas-core-release/dist/cli.js validate-reservation \
+            --version "$VERSION" \
+            --source-sha "$source_sha"
+          {
+            echo "source_sha=$source_sha"
+            echo "tag=atlas-core-v$VERSION"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Wait for exact required Core CI
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+        run: |
+          node tools/atlas-core-release/dist/cli.js verify-ci \
+            --repository "$GITHUB_REPOSITORY" \
+            --source-sha "$SOURCE_SHA" \
+            --timeout-seconds 2700 \
+            > required-core-ci.json
+
+      - name: Upload CI decision
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: atlas-core-reservation-${{ inputs.version }}-${{ github.run_id }}
+          path: required-core-ci.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload compiled tag tool
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: atlas-core-tag-tool-${{ github.run_id }}
+          path: tools/atlas-core-release/dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  reserve-tag:
+    name: Reserve immutable source tag
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment:
+      name: release-commit
+    permissions:
+      contents: read
+    steps:
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Checkout trusted release control
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download prebuilt tag tool
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: atlas-core-tag-tool-${{ github.run_id }}
+          path: ${{ runner.temp }}/atlas-core-tag-tool
+
+      - name: Prepare the annotated tag without release credentials
+        env:
+          SOURCE_SHA: ${{ needs.validate.outputs.source_sha }}
+          TAG: ${{ needs.validate.outputs.tag }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          test "$TAG" = "atlas-core-v$VERSION"
+          git config user.name "Atlas Core release app"
+          git config user.email "atlas-core-release@users.noreply.github.com"
+          if git show-ref --verify --quiet "refs/tags/$TAG"; then
+            node "$RUNNER_TEMP/atlas-core-tag-tool/cli.js" validate-release-tag \
+              --version "$VERSION" \
+              --source-sha "$SOURCE_SHA" >/dev/null
+          else
+            git tag --annotate "$TAG" "$SOURCE_SHA" --message "Atlas Core $VERSION"
+          fi
+
+      - name: Mint read-only release inspection credential
+        id: app-inspection-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.ATLAS_CORE_RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.ATLAS_CORE_RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: Atlas-Modernization
+          permission-administration: read
+          permission-contents: read
+
+      - name: Recheck release protections with the release App
+        env:
+          ATLAS_CORE_RELEASE_CLI: ${{ runner.temp }}/atlas-core-tag-tool/cli.js
+          GH_TOKEN: ${{ steps.app-inspection-token.outputs.token }}
+          RELEASE_APP_ID: ${{ vars.ATLAS_CORE_RELEASE_APP_ID }}
+        run: |
+          set -euo pipefail
+          bash .github/scripts/require-atlas-core-tag-rulesets.sh \
+            "Create both active Atlas Core release tag rulesets before reserving a version." \
+            "$RELEASE_APP_ID"
+          node "$RUNNER_TEMP/atlas-core-tag-tool/cli.js" require-immutable-releases \
+            --repository "$GITHUB_REPOSITORY"
+
+      - name: Mint tag-only release credential
+        id: app-tag-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.ATLAS_CORE_RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.ATLAS_CORE_RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: Atlas-Modernization
+          permission-contents: write
+
+      - name: Create or verify annotated release tag
+        env:
+          GH_TOKEN: ${{ steps.app-tag-token.outputs.token }}
+          SOURCE_SHA: ${{ needs.validate.outputs.source_sha }}
+          TAG: ${{ needs.validate.outputs.tag }}
+        run: |
+          set -euo pipefail
+          tag_state() {
+            # shellcheck disable=SC2016
+            gh api graphql \
+              -f query='query($owner:String!,$name:String!,$qualifiedName:String!){repository(owner:$owner,name:$name){ref(qualifiedName:$qualifiedName){target{__typename oid ... on Tag{target{__typename oid}}}}}}' \
+              -f owner="$GITHUB_REPOSITORY_OWNER" \
+              -f name="${GITHUB_REPOSITORY#*/}" \
+              -f qualifiedName="refs/tags/$TAG" |
+              jq -er --arg source "$SOURCE_SHA" '
+                if .data.repository.ref == null then "absent"
+                elif (.data.repository.ref.target.__typename == "Tag" and
+                      .data.repository.ref.target.target.__typename == "Commit" and
+                      .data.repository.ref.target.target.oid == $source) then "matching"
+                else "conflict"
+                end'
+          }
+
+          state="$(tag_state)"
+          if [ "$state" = "matching" ]; then
+            echo "already-reserved"
+            exit 0
+          fi
+          if [ "$state" = "conflict" ]; then
+            echo "$TAG already exists with a different, lightweight, or nested target" >&2
+            exit 1
+          fi
+
+          authorization="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          if ! GIT_CONFIG_COUNT=1 \
+            GIT_CONFIG_KEY_0=http.https://github.com/.extraheader \
+            GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $authorization" \
+            git push origin "refs/tags/$TAG:refs/tags/$TAG"; then
+            test "$(tag_state)" = "matching"
+            echo "already-reserved"
+            exit 0
+          fi
+          unset authorization
+          test "$(tag_state)" = "matching"
+          echo "created"
+
+      - name: Report reservation
+        env:
+          SOURCE_SHA: ${{ needs.validate.outputs.source_sha }}
+          TAG: ${{ needs.validate.outputs.tag }}
+        run: |
+          # shellcheck disable=SC2016
+          {
+            printf '## Atlas Core %s reserved\n\n' "${TAG#atlas-core-v}"
+            printf -- '- Source: `%s`\n' "$SOURCE_SHA"
+            printf -- '- Immutable tag: `%s`\n' "$TAG"
+            printf -- '- Publication: %s/%s/actions/workflows/release-atlas-core.yml\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY"
+            printf '%s\n' '- This request reserved the version. It did not claim that publication completed.'
+          } >> "$GITHUB_STEP_SUMMARY"

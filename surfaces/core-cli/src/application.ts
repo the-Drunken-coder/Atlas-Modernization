@@ -6278,7 +6278,8 @@ function resolveInstalledCLI(packageDirectory: string): string {
 }
 
 function validateVersion(version: string, source: string): void {
-  if (!/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/u.test(version)) {
+  const developmentVersion = (source === "installed CLI" || source === "running Atlas Core") && version === "0.0.0-dev";
+  if (!developmentVersion && !/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/u.test(version)) {
     throw new Error(`${source} has an invalid Atlas Core version: ${version}`);
   }
 }
@@ -6286,12 +6287,13 @@ function validateVersion(version: string, source: string): void {
 function compareVersions(left: string, right: string, leftSource: string, rightSource: string): number {
   validateVersion(left, leftSource);
   validateVersion(right, rightSource);
-  const leftParts = left.split(".").map(Number);
-  const rightParts = right.split(".").map(Number);
+  const leftParts = left.replace(/-dev$/u, "").split(".").map(Number);
+  const rightParts = right.replace(/-dev$/u, "").split(".").map(Number);
   for (let index = 0; index < 3; index += 1) {
     const difference = (leftParts[index] ?? 0) - (rightParts[index] ?? 0);
     if (difference !== 0) return Math.sign(difference);
   }
+  if (left.endsWith("-dev") !== right.endsWith("-dev")) return left.endsWith("-dev") ? -1 : 1;
   return 0;
 }
 

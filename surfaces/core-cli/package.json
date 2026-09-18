@@ -1,7 +1,7 @@
 {
   "name": "atlas-core",
-  "version": "0.2.1",
-  "atlasCoreImage": "ghcr.io/the-drunken-coder/atlas-core@sha256:339280ff27c5879838898278ef2f51b3bdfe5ace493a81d623cb3c3e3f62e0f9",
+  "version": "0.0.0-dev",
+  "atlasCoreImage": null,
   "description": "Install and operate a durable Atlas Core deployment with Docker Compose.",
   "author": "the-Drunken-coder",
   "license": "MIT",
@@ -44,7 +44,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "biome lint --config-path biome.json .",
     "format:check": "biome check --linter-enabled=false --config-path biome.json .",
-    "test": "vitest run",
+    "test": "node --test scripts/*.node-test.mjs && vitest run",
     "test:package": "node test/packed-install-smoke.mjs",
     "test:portable-package": "node test/portable-packed-cli.mjs",
     "check": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run build && npm run test:package && npm run test:portable-package"
