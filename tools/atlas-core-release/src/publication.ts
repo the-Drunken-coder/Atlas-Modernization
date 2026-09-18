@@ -115,7 +115,6 @@ export class LivePublicationAdapters implements PublicationAdapters {
   readonly #fetchAttestation: AttestationFetcher;
   #verifiedReleaseManifest: ReleaseManifest | undefined;
   #releaseAttestationVerified = false;
-  #anonymousImageVerified = false;
   #npmVerified = false;
 
   constructor(
@@ -569,7 +568,6 @@ export class LivePublicationAdapters implements PublicationAdapters {
   }
 
   async #verifyAnonymousImage(): Promise<void> {
-    if (this.#anonymousImageVerified) return;
     const anonymousDockerConfig = mkdtempSync(join(tmpdir(), "atlas-core-anonymous-docker-"));
     try {
       await waitForValue(
@@ -587,7 +585,6 @@ export class LivePublicationAdapters implements PublicationAdapters {
         this.#timings,
         "anonymous image visibility"
       );
-      this.#anonymousImageVerified = true;
     } finally {
       rmSync(anonymousDockerConfig, { recursive: true, force: true });
     }

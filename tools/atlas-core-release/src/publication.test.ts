@@ -215,6 +215,25 @@ test("completed live recovery performs verification without external writes", as
   }
 });
 
+test("completed verification rechecks anonymous image visibility after inspection", async () => {
+  const fixture = publicationFixture();
+  try {
+    const runner = new ControlledPublicationRunner(fixture.manifest, fixture.root, "github-create", "after");
+    runner.clearFailure();
+    await reconcileLivePublication(fixture.manifest, fixture.root, runner, { deadlineMs: 0, retryMs: 0 });
+    const checksBefore = runner.readCounts.get("anonymous-image") ?? 0;
+    runner.anonymousImageVisibility.push(true, false);
+
+    await assert.rejects(
+      verifyCompletedLivePublication(fixture.manifest, fixture.root, runner, { deadlineMs: 0, retryMs: 0 }),
+      /anonymous image visibility/
+    );
+    assert.equal((runner.readCounts.get("anonymous-image") ?? 0) - checksBefore, 2);
+  } finally {
+    fixture.remove();
+  }
+});
+
 test("npm publication waits for anonymous image visibility", async () => {
   const fixture = publicationFixture();
   try {
@@ -462,6 +481,7 @@ class ControlledPublicationRunner implements CommandRunner {
   readonly npmTags: { latest?: string; recovered?: string } = {};
   releaseTitle: string | undefined = undefined;
   anonymousImageVisible = true;
+  readonly anonymousImageVisibility: boolean[] = [];
   readonly trace: string[] = [];
   readonly writeCounts = new Map<WriteName, number>();
   readonly readCounts = new Map<string, number>();
@@ -584,7 +604,9 @@ class ControlledPublicationRunner implements CommandRunner {
       });
     }
     if (args.includes("manifest") && args.includes("inspect")) {
-      return this.anonymousImageVisible ? success() : failure("manifest unknown");
+      this.#read("anonymous-image");
+      const visible = this.anonymousImageVisibility.shift() ?? this.anonymousImageVisible;
+      return visible ? success() : failure("manifest unknown");
     }
     return failure(`unexpected docker command: ${args.join(" ")}`);
   }
