@@ -64,23 +64,28 @@ test("npm provenance downloads are restricted to the exact registry endpoint", a
     validateNpmAttestationUrl("https://registry.npmjs.org/-/npm/v1/attestations/atlas-core@1.2.3", "1.2.3").href,
     "https://registry.npmjs.org/-/npm/v1/attestations/atlas-core@1.2.3"
   );
-  for (const value of [
+  const invalidUrls = [
     "https://example.invalid/-/npm/v1/attestations/atlas-core@1.2.3",
+    "http://registry.npmjs.org/-/npm/v1/attestations/atlas-core@1.2.3",
+    "https://registry.npmjs.org:444/-/npm/v1/attestations/atlas-core@1.2.3",
+    "https://user:password@registry.npmjs.org/-/npm/v1/attestations/atlas-core@1.2.3",
     "https://registry.npmjs.org/-/npm/v1/attestations/atlas-core@9.9.9",
-    "https://registry.npmjs.org/-/npm/v1/attestations/atlas-core@1.2.3?redirect=https://example.invalid"
-  ]) {
+    "https://registry.npmjs.org/-/npm/v1/attestations/atlas-core@1.2.3?redirect=https://example.invalid",
+    "https://registry.npmjs.org/-/npm/v1/attestations/atlas-core@1.2.3#fragment"
+  ];
+  for (const value of invalidUrls) {
     assert.throws(() => validateNpmAttestationUrl(value, "1.2.3"), /unexpected origin or path/);
-  }
 
-  let requested = false;
-  await assert.rejects(
-    fetchNpmAttestation("https://example.invalid/-/npm/v1/attestations/atlas-core@1.2.3", "1.2.3", async () => {
-      requested = true;
-      return new Response("{}");
-    }),
-    /unexpected origin or path/
-  );
-  assert.equal(requested, false);
+    let requested = false;
+    await assert.rejects(
+      fetchNpmAttestation(value, "1.2.3", async () => {
+        requested = true;
+        return new Response("{}");
+      }),
+      /unexpected origin or path/
+    );
+    assert.equal(requested, false);
+  }
 });
 
 test("npm provenance fetch rejects redirects and oversized responses without retrying", async () => {
