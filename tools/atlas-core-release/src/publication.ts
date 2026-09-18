@@ -704,7 +704,13 @@ export async function fetchNpmAttestation(url: string, fetcher: typeof fetch = f
   if (response.redirected || (response.url !== "" && response.url !== url)) {
     throw new PermanentPublicationReadError("npm provenance resolved to an unexpected URL");
   }
-  if (!response.ok) throw new Error(`npm provenance returned HTTP ${response.status}`);
+  if (!response.ok) {
+    const message = `npm provenance returned HTTP ${response.status}`;
+    if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
+      throw new PermanentPublicationReadError(message);
+    }
+    throw new Error(message);
+  }
   const declaredLength = response.headers.get("content-length");
   if (declaredLength !== null) {
     const bytes = Number(declaredLength);

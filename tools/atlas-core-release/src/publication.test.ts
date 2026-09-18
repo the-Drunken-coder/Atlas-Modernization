@@ -131,6 +131,47 @@ test("npm provenance fetch rejects redirects and oversized responses without ret
   }
 });
 
+test("npm provenance fetch retries only transient HTTP failures", async () => {
+  const fixture = publicationFixture();
+  const runner = new ControlledPublicationRunner(fixture.manifest, fixture.root, "github-create", "after");
+  let fetches = 0;
+  try {
+    runner.clearFailure();
+    await assert.rejects(
+      reconcileLivePublicationImpl(
+        fixture.manifest,
+        fixture.root,
+        runner,
+        { deadlineMs: 1_000, retryMs: 0 },
+        async (url) => {
+          fetches += 1;
+          return await fetchNpmAttestation(url, async () => new Response(null, { status: 400 }));
+        }
+      ),
+      /npm provenance returned HTTP 400/
+    );
+    assert.equal(fetches, 1);
+
+    fetches = 0;
+    const plan = await reconcileLivePublicationImpl(
+      fixture.manifest,
+      fixture.root,
+      runner,
+      { deadlineMs: 1_000, retryMs: 0 },
+      async (url) => {
+        fetches += 1;
+        return await fetchNpmAttestation(url, async () =>
+          fetches === 1 ? new Response(null, { status: 408 }) : new Response(JSON.stringify(runner.attestation()))
+        );
+      }
+    );
+    assert.equal(fetches, 2);
+    assert.equal(plan.complete, true);
+  } finally {
+    fixture.remove();
+  }
+});
+
 test("completed live recovery performs verification without external writes", async () => {
   const fixture = publicationFixture();
   try {
