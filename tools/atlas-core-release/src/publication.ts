@@ -40,7 +40,7 @@ export interface PublicationTimings {
   retryMs: number;
 }
 
-export type AttestationFetcher = (url: string) => Promise<unknown>;
+export type AttestationFetcher = (url: string, version: string) => Promise<unknown>;
 
 export const MAX_NPM_ATTESTATION_BYTES = 5 * 1024 * 1024;
 
@@ -609,7 +609,7 @@ export class LivePublicationAdapters implements PublicationAdapters {
     if (!attestationUrl) throw new Error("npm provenance URL did not become visible");
     validateNpmAttestationUrl(attestationUrl, this.#manifest.release.version);
     const attestation = await waitForValue(
-      () => this.#fetchAttestation(attestationUrl),
+      () => this.#fetchAttestation(attestationUrl, this.#manifest.release.version),
       (value) => value !== undefined,
       this.#timings,
       "npm provenance document"
@@ -696,12 +696,17 @@ export function validateNpmAttestationUrl(value: string, version: string): URL {
   return url;
 }
 
-export async function fetchNpmAttestation(url: string, fetcher: typeof fetch = fetch): Promise<unknown> {
-  const response = await fetcher(url, { redirect: "manual", signal: AbortSignal.timeout(30_000) });
+export async function fetchNpmAttestation(
+  url: string,
+  version: string,
+  fetcher: typeof fetch = fetch
+): Promise<unknown> {
+  const validatedUrl = validateNpmAttestationUrl(url, version).href;
+  const response = await fetcher(validatedUrl, { redirect: "manual", signal: AbortSignal.timeout(30_000) });
   if (response.status >= 300 && response.status < 400) {
     throw new PermanentPublicationReadError("npm provenance refused an HTTP redirect");
   }
-  if (response.redirected || (response.url !== "" && response.url !== url)) {
+  if (response.redirected || (response.url !== "" && response.url !== validatedUrl)) {
     throw new PermanentPublicationReadError("npm provenance resolved to an unexpected URL");
   }
   if (!response.ok) {

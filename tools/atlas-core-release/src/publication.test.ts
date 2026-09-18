@@ -59,7 +59,7 @@ test("image inspection distinguishes absence from registry and response failures
   assert.equal(inspectImage(new ImageRunner("present"), "registry.test/core:1.2.3"), imageDigest);
 });
 
-test("npm provenance downloads are restricted to the exact registry endpoint", () => {
+test("npm provenance downloads are restricted to the exact registry endpoint", async () => {
   assert.equal(
     validateNpmAttestationUrl("https://registry.npmjs.org/-/npm/v1/attestations/atlas-core@1.2.3", "1.2.3").href,
     "https://registry.npmjs.org/-/npm/v1/attestations/atlas-core@1.2.3"
@@ -71,6 +71,16 @@ test("npm provenance downloads are restricted to the exact registry endpoint", (
   ]) {
     assert.throws(() => validateNpmAttestationUrl(value, "1.2.3"), /unexpected origin or path/);
   }
+
+  let requested = false;
+  await assert.rejects(
+    fetchNpmAttestation("https://example.invalid/-/npm/v1/attestations/atlas-core@1.2.3", "1.2.3", async () => {
+      requested = true;
+      return new Response("{}");
+    }),
+    /unexpected origin or path/
+  );
+  assert.equal(requested, false);
 });
 
 test("npm provenance fetch rejects redirects and oversized responses without retrying", async () => {
@@ -87,7 +97,7 @@ test("npm provenance fetch rejects redirects and oversized responses without ret
         { deadlineMs: 1_000, retryMs: 0 },
         async (url) => {
           fetches += 1;
-          return await fetchNpmAttestation(url, async (_input, init) => {
+          return await fetchNpmAttestation(url, fixture.manifest.release.version, async (_input, init) => {
             assert.equal(init?.redirect, "manual");
             return new Response(null, {
               status: 302,
@@ -103,6 +113,7 @@ test("npm provenance fetch rejects redirects and oversized responses without ret
     await assert.rejects(
       fetchNpmAttestation(
         "https://registry.npmjs.org/-/npm/v1/attestations/atlas-core@1.2.3",
+        "1.2.3",
         async () =>
           new Response("{}", {
             headers: { "content-length": String(MAX_NPM_ATTESTATION_BYTES + 1) }
@@ -114,6 +125,7 @@ test("npm provenance fetch rejects redirects and oversized responses without ret
     await assert.rejects(
       fetchNpmAttestation(
         "https://registry.npmjs.org/-/npm/v1/attestations/atlas-core@1.2.3",
+        "1.2.3",
         async () =>
           new Response(
             new ReadableStream({
@@ -145,7 +157,11 @@ test("npm provenance fetch retries only transient HTTP failures", async () => {
         { deadlineMs: 1_000, retryMs: 0 },
         async (url) => {
           fetches += 1;
-          return await fetchNpmAttestation(url, async () => new Response(null, { status: 400 }));
+          return await fetchNpmAttestation(
+            url,
+            fixture.manifest.release.version,
+            async () => new Response(null, { status: 400 })
+          );
         }
       ),
       /npm provenance returned HTTP 400/
@@ -160,7 +176,7 @@ test("npm provenance fetch retries only transient HTTP failures", async () => {
       { deadlineMs: 1_000, retryMs: 0 },
       async (url) => {
         fetches += 1;
-        return await fetchNpmAttestation(url, async () =>
+        return await fetchNpmAttestation(url, fixture.manifest.release.version, async () =>
           fetches === 1 ? new Response(null, { status: 408 }) : new Response(JSON.stringify(runner.attestation()))
         );
       }
