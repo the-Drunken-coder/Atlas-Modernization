@@ -152,9 +152,11 @@ async function readBoundedResponse(response: Response): Promise<string> {
   if (declaredLength !== null) {
     const bytes = Number(declaredLength);
     if (!Number.isSafeInteger(bytes) || bytes < 0) {
+      await response.body?.cancel().catch(() => undefined);
       throw new GitHubResponseLimitError("GitHub API response has an invalid Content-Length");
     }
     if (bytes > MAX_GITHUB_RESPONSE_BYTES) {
+      await response.body?.cancel().catch(() => undefined);
       throw new GitHubResponseLimitError("GitHub API response exceeds the size limit");
     }
   }

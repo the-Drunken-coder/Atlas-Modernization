@@ -76,20 +76,47 @@ test("the CI deadline retries transient GitHub API failures", async () => {
 
 test("GitHub API responses are bounded before success JSON or error text is parsed", async () => {
   let successRequests = 0;
+  let oversizedDeclaredCanceled = false;
   const oversizedSuccess = new GitHubClient("owner/repository", "token", "https://api.example.invalid", {
     fetch: async () => {
       successRequests += 1;
-      return new Response("{}", {
-        headers: { "content-length": String(MAX_GITHUB_RESPONSE_BYTES + 1) }
-      });
+      return new Response(
+        new ReadableStream({
+          cancel() {
+            oversizedDeclaredCanceled = true;
+          }
+        }),
+        {
+          headers: { "content-length": String(MAX_GITHUB_RESPONSE_BYTES + 1) }
+        }
+      );
     },
     now: () => 0,
     sleep: async () => undefined
   });
   await assert.rejects(oversizedSuccess.requireImmutableReleases(), /exceeds the size limit/);
   assert.equal(successRequests, 1);
+  assert.equal(oversizedDeclaredCanceled, true);
+
+  let invalidDeclaredCanceled = false;
+  const invalidLength = new GitHubClient("owner/repository", "token", "https://api.example.invalid", {
+    fetch: async () =>
+      new Response(
+        new ReadableStream({
+          cancel() {
+            invalidDeclaredCanceled = true;
+          }
+        }),
+        { headers: { "content-length": "invalid" } }
+      ),
+    now: () => 0,
+    sleep: async () => undefined
+  });
+  await assert.rejects(invalidLength.requireImmutableReleases(), /invalid Content-Length/);
+  assert.equal(invalidDeclaredCanceled, true);
 
   let errorRequests = 0;
+  let oversizedChunkedCanceled = false;
   const oversizedError = new GitHubClient("owner/repository", "token", "https://api.example.invalid", {
     fetch: async () => {
       errorRequests += 1;
@@ -97,7 +124,9 @@ test("GitHub API responses are bounded before success JSON or error text is pars
         new ReadableStream({
           start(controller) {
             controller.enqueue(new Uint8Array(MAX_GITHUB_RESPONSE_BYTES + 1));
-            controller.close();
+          },
+          cancel() {
+            oversizedChunkedCanceled = true;
           }
         }),
         { status: 503 }
@@ -108,6 +137,7 @@ test("GitHub API responses are bounded before success JSON or error text is pars
   });
   await assert.rejects(oversizedError.requireImmutableReleases(), /exceeds the size limit/);
   assert.equal(errorRequests, 1);
+  assert.equal(oversizedChunkedCanceled, true);
 });
 
 function json(value: unknown): Response {

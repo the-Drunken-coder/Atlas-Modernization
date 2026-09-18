@@ -79,8 +79,9 @@ test("tag ruleset checks pin the intended App and can use the isolated CLI", () 
   assert.match(tagRulesetGuard, /if \[ "\$#" -ne 2 \]/u);
   assert.match(tagRulesetGuard, /--release-app-id "\$release_app_id"/u);
   assert.match(tagRulesetGuard, /ATLAS_CORE_RELEASE_CLI:-/u);
-  assert.match(recheckProtections, /release_app_id="\$\(gh api \/installation --jq \.app_id\)"/u);
-  assert.match(recheckProtections, /"\$release_app_id"/u);
+  assert.match(recheckProtections, /RELEASE_APP_ID: \$\{\{ vars\.ATLAS_CORE_RELEASE_APP_ID \}\}/u);
+  assert.match(recheckProtections, /"\$RELEASE_APP_ID"/u);
+  assert.doesNotMatch(recheckProtections, /gh api \/installation/u);
   assert.doesNotMatch(publication, /require-atlas-core-tag-rulesets|ATLAS_CORE_RELEASE_APP_(?:ID|CLIENT_ID)/u);
 });
 

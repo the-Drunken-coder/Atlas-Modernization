@@ -164,12 +164,12 @@ jobs:
         env:
           ATLAS_CORE_RELEASE_CLI: ${{ runner.temp }}/atlas-core-tag-tool/cli.js
           GH_TOKEN: ${{ steps.app-inspection-token.outputs.token }}
+          RELEASE_APP_ID: ${{ vars.ATLAS_CORE_RELEASE_APP_ID }}
         run: |
           set -euo pipefail
-          release_app_id="$(gh api /installation --jq .app_id)"
           bash .github/scripts/require-atlas-core-tag-rulesets.sh \
             "Create both active Atlas Core release tag rulesets before reserving a version." \
-            "$release_app_id"
+            "$RELEASE_APP_ID"
           node "$RUNNER_TEMP/atlas-core-tag-tool/cli.js" require-immutable-releases \
             --repository "$GITHUB_REPOSITORY"
 
