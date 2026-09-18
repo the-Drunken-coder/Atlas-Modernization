@@ -89,7 +89,7 @@ switch (command) {
     validateTagRulesets(
       parseRuleset(readJSON(required(options, "creation"))),
       parseRuleset(readJSON(required(options, "immutability"))),
-      options.has("release-app-id") ? Number(required(options, "release-app-id")) : undefined
+      Number(required(options, "release-app-id"))
     );
     break;
   case "require-immutable-releases":

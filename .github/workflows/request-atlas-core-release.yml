@@ -145,6 +145,7 @@ jobs:
 
       - name: Recheck release protections with the release App
         env:
+          ATLAS_CORE_RELEASE_CLI: ${{ runner.temp }}/atlas-core-tag-tool/cli.js
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail

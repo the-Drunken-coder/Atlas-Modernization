@@ -135,8 +135,10 @@ conflicting state is never replaced.
 
 The dedicated Atlas Core release GitHub App needs repository **Contents: read and write** plus **Administration: read**.
 Administration access is used only to verify immutable-release settings and the exact release-tag bypass actors
-immediately before reservation. Record its client ID as `ATLAS_CORE_RELEASE_APP_CLIENT_ID` and its private key as the `release-commit` environment secret
-`ATLAS_CORE_RELEASE_APP_PRIVATE_KEY`. The App token exists only in the isolated tag-creation job. That job does not run
+immediately before reservation. Record its client ID as `ATLAS_CORE_RELEASE_APP_CLIENT_ID`, its numeric App ID as the
+repository variable `ATLAS_CORE_RELEASE_APP_ID`, and its private key as the `release-commit` environment secret
+`ATLAS_CORE_RELEASE_APP_PRIVATE_KEY`. The numeric App ID pins every ruleset check to this App rather than accepting any
+integration bypass. The App token exists only in the isolated tag-creation job. That job does not run
 package or repository scripts, and the App no longer needs a `main` protection bypass.
 
 Maintain two active tag rulesets targeting only `refs/tags/atlas-core-v*`:

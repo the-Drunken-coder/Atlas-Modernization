@@ -62,6 +62,7 @@ test("requires split creation and immutability tag rules", () => {
     bypass_actors: []
   };
   assert.doesNotThrow(() => validateTagRulesets(creation, immutability, 42));
+  assert.throws(() => validateTagRulesets(creation, immutability, 0), /positive integer/);
   assert.throws(
     () => validateTagRulesets({ ...creation, rules: [{ type: "creation" }, { type: "update" }] }, immutability, 42),
     /must not include update/

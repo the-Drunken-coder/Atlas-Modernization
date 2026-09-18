@@ -650,8 +650,8 @@ export function validateNpmAttestation(
   }
 }
 
-export function validateTagRulesets(creation: Ruleset, immutability: Ruleset, expectedAppId?: number): void {
-  if (expectedAppId !== undefined && (!Number.isSafeInteger(expectedAppId) || expectedAppId < 1)) {
+export function validateTagRulesets(creation: Ruleset, immutability: Ruleset, expectedAppId: number): void {
+  if (!Number.isSafeInteger(expectedAppId) || expectedAppId < 1) {
     throw new Error("Release App ID must be a positive integer");
   }
   validateTagRuleset(creation, "Atlas Core release tag creation", ["creation"], ["update", "deletion"]);
@@ -663,7 +663,7 @@ export function validateTagRulesets(creation: Ruleset, immutability: Ruleset, ex
     (creationBypasses[0]?.actor_id ?? 0) < 1 ||
     creationBypasses[0]?.actor_type !== "Integration" ||
     creationBypasses[0]?.bypass_mode !== "always" ||
-    (expectedAppId !== undefined && creationBypasses[0]?.actor_id !== expectedAppId)
+    creationBypasses[0]?.actor_id !== expectedAppId
   ) {
     throw new Error("Atlas Core release tag creation must allow only the intended release App to bypass creation");
   }

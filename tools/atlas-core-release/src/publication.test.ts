@@ -367,7 +367,9 @@ class ControlledPublicationRunner implements CommandRunner {
       });
     }
     if (args[0] === "release" && args[1] === "edit" && args.includes("--prerelease=false")) {
-      if (args.includes("--latest")) return failure("Core publication must not claim repository-wide latest");
+      if (args.some((arg) => arg.startsWith("--latest") && arg !== "--latest=false")) {
+        return failure("Core publication must not claim repository-wide latest");
+      }
       return this.#write("github-final", () => {
         this.releaseState = "published";
       });

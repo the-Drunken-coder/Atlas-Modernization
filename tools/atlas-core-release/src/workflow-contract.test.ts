@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 const repository = join(dirname(fileURLToPath(import.meta.url)), "../../..");
 const publication = readFileSync(join(repository, ".github/workflows/release-atlas-core.yml"), "utf8");
 const request = readFileSync(join(repository, ".github/workflows/request-atlas-core-release.yml"), "utf8");
+const tagRulesetGuard = readFileSync(join(repository, ".github/scripts/require-atlas-core-tag-rulesets.sh"), "utf8");
 const sourcePackage = JSON.parse(readFileSync(join(repository, "surfaces/core-cli/package.json"), "utf8")) as {
   version?: unknown;
   atlasCoreImage?: unknown;
@@ -44,10 +45,18 @@ test("the request workflow isolates the release App in the tag job", () => {
   assert.match(reservation, /client-id: \$\{\{ vars\.ATLAS_CORE_RELEASE_APP_CLIENT_ID \}\}/u);
   assert.match(reservation, /permission-administration: read/u);
   assert.match(reservation, /require-atlas-core-tag-rulesets/u);
+  assert.match(reservation, /ATLAS_CORE_RELEASE_CLI:.*atlas-core-tag-tool\/cli\.js/u);
   assert.match(reservation, /require-immutable-releases/u);
   assert.doesNotMatch(requestValidation, /require-atlas-core-tag-rulesets|require-immutable-releases/u);
   assert.doesNotMatch(reservation, /npm (?:ci|run|test|publish)/u);
   assert.doesNotMatch(request, /git push[^\n]*main/u);
+});
+
+test("tag ruleset checks pin the intended App and can use the isolated CLI", () => {
+  assert.match(tagRulesetGuard, /if \[ "\$#" -ne 2 \]/u);
+  assert.match(tagRulesetGuard, /--release-app-id "\$release_app_id"/u);
+  assert.match(tagRulesetGuard, /ATLAS_CORE_RELEASE_CLI:-/u);
+  assert.equal(publication.match(/ATLAS_CORE_RELEASE_APP_ID/gu)?.length, 2);
 });
 
 test("checked-in package metadata is explicitly unreleased", () => {
