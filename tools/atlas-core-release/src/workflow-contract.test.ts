@@ -45,6 +45,20 @@ test("publication runs the typed reconciler and requires an immutable release se
   assert.doesNotMatch(publication, /npm publish "\$package"/u);
 });
 
+test("acceptance evidence is unique per attempt and assembly selects the latest attempt", () => {
+  assert.match(
+    publication,
+    /name: atlas-core-docker-\$\{\{ matrix\.architecture \}\}-\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}/u
+  );
+  assert.match(
+    publication,
+    /name: atlas-core-portable-\$\{\{ matrix\.name \}\}-\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}/u
+  );
+  assert.match(publication, /pattern: atlas-core-docker-\*-\$\{\{ github\.run_id \}\}-\*/u);
+  assert.match(publication, /pattern: atlas-core-portable-\*-\$\{\{ github\.run_id \}\}-\*/u);
+  assert.match(publication, /sort -V \| tail -n 1/u);
+});
+
 test("the request workflow isolates the release App in the tag job", () => {
   assert.match(reservation, /name: release-commit/u);
   assert.equal(request.match(/create-github-app-token/gu)?.length, 2);

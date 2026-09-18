@@ -148,7 +148,7 @@ test("npm provenance fetch rejects redirects and oversized responses without ret
   }
 });
 
-test("npm provenance fetch retries only transient HTTP failures", async () => {
+test("npm provenance fetch retries propagation misses and transient HTTP failures", async () => {
   const fixture = publicationFixture();
   const runner = new ControlledPublicationRunner(fixture.manifest, fixture.root, "github-create", "after");
   let fetches = 0;
@@ -182,11 +182,15 @@ test("npm provenance fetch retries only transient HTTP failures", async () => {
       async (url) => {
         fetches += 1;
         return await fetchNpmAttestation(url, fixture.manifest.release.version, async () =>
-          fetches === 1 ? new Response(null, { status: 408 }) : new Response(JSON.stringify(runner.attestation()))
+          fetches === 1
+            ? new Response(null, { status: 404 })
+            : fetches === 2
+              ? new Response(null, { status: 408 })
+              : new Response(JSON.stringify(runner.attestation()))
         );
       }
     );
-    assert.equal(fetches, 2);
+    assert.equal(fetches, 3);
     assert.equal(plan.complete, true);
   } finally {
     fixture.remove();
@@ -206,6 +210,23 @@ test("completed live recovery performs verification without external writes", as
     });
     assert.equal(result.complete, true);
     assert.deepEqual(runner.trace, writes);
+  } finally {
+    fixture.remove();
+  }
+});
+
+test("npm publication waits for anonymous image visibility", async () => {
+  const fixture = publicationFixture();
+  try {
+    const runner = new ControlledPublicationRunner(fixture.manifest, fixture.root, "github-create", "after");
+    runner.clearFailure();
+    runner.anonymousImageVisible = false;
+    await assert.rejects(
+      reconcileLivePublication(fixture.manifest, fixture.root, runner, { deadlineMs: 0, retryMs: 0 }),
+      /anonymous image visibility/
+    );
+    assert.equal(runner.image, fixture.manifest.image.digest);
+    assert.equal(runner.npm, undefined);
   } finally {
     fixture.remove();
   }
@@ -440,6 +461,7 @@ class ControlledPublicationRunner implements CommandRunner {
   highestVersion: string | undefined = undefined;
   readonly npmTags: { latest?: string; recovered?: string } = {};
   releaseTitle: string | undefined = undefined;
+  anonymousImageVisible = true;
   readonly trace: string[] = [];
   readonly writeCounts = new Map<WriteName, number>();
   readonly readCounts = new Map<string, number>();
@@ -561,7 +583,9 @@ class ControlledPublicationRunner implements CommandRunner {
         this.image = imageDigest;
       });
     }
-    if (args.includes("manifest") && args.includes("inspect")) return success();
+    if (args.includes("manifest") && args.includes("inspect")) {
+      return this.anonymousImageVisible ? success() : failure("manifest unknown");
+    }
     return failure(`unexpected docker command: ${args.join(" ")}`);
   }
 

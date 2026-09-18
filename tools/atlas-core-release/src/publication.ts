@@ -115,6 +115,7 @@ export class LivePublicationAdapters implements PublicationAdapters {
   readonly #fetchAttestation: AttestationFetcher;
   #verifiedReleaseManifest: ReleaseManifest | undefined;
   #releaseAttestationVerified = false;
+  #anonymousImageVerified = false;
   #npmVerified = false;
 
   constructor(
@@ -140,6 +141,7 @@ export class LivePublicationAdapters implements PublicationAdapters {
       `${this.#manifest.image.repository}:${this.#manifest.release.version}`,
       this.#timings
     );
+    if (imageDigest === this.#manifest.image.digest) await this.#verifyAnonymousImage();
     const npmIntegrityValue = await this.#inspectNpmIntegrity();
     if (npmIntegrityValue && npmIntegrityValue !== this.#manifest.package.integrity) {
       throw new Error(
@@ -562,6 +564,12 @@ export class LivePublicationAdapters implements PublicationAdapters {
       this.#timings
     );
     if (imageDigest !== this.#manifest.image.digest) throw new Error("Published image digest does not match manifest");
+    await this.#verifyAnonymousImage();
+    await this.#verifyNpm();
+  }
+
+  async #verifyAnonymousImage(): Promise<void> {
+    if (this.#anonymousImageVerified) return;
     const anonymousDockerConfig = mkdtempSync(join(tmpdir(), "atlas-core-anonymous-docker-"));
     try {
       await waitForValue(
@@ -579,10 +587,10 @@ export class LivePublicationAdapters implements PublicationAdapters {
         this.#timings,
         "anonymous image visibility"
       );
+      this.#anonymousImageVerified = true;
     } finally {
       rmSync(anonymousDockerConfig, { recursive: true, force: true });
     }
-    await this.#verifyNpm();
   }
 
   async #verifyNpm(): Promise<void> {
@@ -706,14 +714,23 @@ export async function fetchNpmAttestation(
   const validatedUrl = validateNpmAttestationUrl(url, version).href;
   const response = await fetcher(validatedUrl, { redirect: "manual", signal: AbortSignal.timeout(30_000) });
   if (response.status >= 300 && response.status < 400) {
+    await response.body?.cancel().catch(() => undefined);
     throw new PermanentPublicationReadError("npm provenance refused an HTTP redirect");
   }
   if (response.redirected || (response.url !== "" && response.url !== validatedUrl)) {
+    await response.body?.cancel().catch(() => undefined);
     throw new PermanentPublicationReadError("npm provenance resolved to an unexpected URL");
   }
   if (!response.ok) {
     const message = `npm provenance returned HTTP ${response.status}`;
-    if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
+    await response.body?.cancel().catch(() => undefined);
+    if (
+      response.status >= 400 &&
+      response.status < 500 &&
+      response.status !== 404 &&
+      response.status !== 408 &&
+      response.status !== 429
+    ) {
       throw new PermanentPublicationReadError(message);
     }
     throw new Error(message);
@@ -722,6 +739,7 @@ export async function fetchNpmAttestation(
   if (declaredLength !== null) {
     const bytes = Number(declaredLength);
     if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > MAX_NPM_ATTESTATION_BYTES) {
+      await response.body?.cancel().catch(() => undefined);
       throw new PermanentPublicationReadError("npm provenance response exceeds the size limit");
     }
   }
