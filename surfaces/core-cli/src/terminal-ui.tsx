@@ -2,7 +2,11 @@ import { Box, type Key, render, Text, useApp, useInput, usePaste, useWindowSize 
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import wrapAnsi from "wrap-ansi";
 import { LogBuffer } from "./log-stream.js";
-import { CommandCancelledError } from "./operation-errors.js";
+import {
+  CommandCancelledError,
+  PluginOperationFailure,
+  pluginFailureRequiresRecoveryStatus
+} from "./operation-errors.js";
 import type {
   AtlasCoreOperator,
   DeploymentDetails,
@@ -120,8 +124,8 @@ type PluginActivityEvent = PluginActivity & { elapsedMs: number };
 type PluginActivityView = {
   action: "Enable" | "Disable" | "Install" | "Replace" | "Update";
   completedAt?: number;
-  error?: string;
   events: PluginActivityEvent[];
+  failure?: Error;
   operationId: number;
   plugin: PluginDeploymentStatus;
   snapshot?: DeploymentSnapshot;
@@ -532,7 +536,7 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
           view: {
             ...current.view,
             completedAt: Date.now(),
-            ...(status === "failure" && result.failure ? { error: result.failure.message } : {}),
+            ...(status === "failure" && result.failure ? { failure: result.failure } : {}),
             ...(snapshot ? { snapshot } : {}),
             status
           }
@@ -1974,19 +1978,55 @@ function pluginActivitySummary(view: PluginActivityView): ActivityLine | undefin
     return { color: "yellow", text: `${view.action} cancelled. The previous ${preserved} is preserved.` };
   }
   if (view.status === "failure") {
-    const lines = [view.error ? `${view.action} failed: ${view.error}` : `${view.action} failed.`];
+    const lines = pluginFailureSummary(view);
     if (view.snapshot) {
       lines.push(`Deployment state: ${lifecycleSnapshotStatus(view.snapshot.status)}. ${view.snapshot.detail}`);
     }
-    lines.push(pluginRecoveryHint(view));
+    lines.push(pluginFailureGuidance(view));
     return { color: "red", text: lines.join(" ") };
   }
   return undefined;
 }
 
-function pluginRecoveryHint(view: PluginActivityView): string {
-  if (/recovery remains pending|Plugin recovery is pending|pending/i.test(view.error ?? "")) {
-    return "Run atlas-core recover status, finish the pending recovery, then retry the Plugin operation.";
+function pluginFailureSummary(view: PluginActivityView): string[] {
+  if (!(view.failure instanceof PluginOperationFailure)) {
+    return [view.failure ? `${view.action} failed: ${view.failure.message}` : `${view.action} failed.`];
+  }
+  const failure = view.failure;
+  const lines = [`${view.action} failed: ${failure.operationError.message}`];
+  if (failure.recoveryError) lines.push(`Recovery failed: ${failure.recoveryError.message}`);
+  switch (failure.outcome) {
+    case "rejected":
+      lines.push("The requested Plugin change did not occur.");
+      break;
+    case "restored":
+      lines.push("The previous Plugin state was restored. This does not assert that the Plugin is healthy or running.");
+      break;
+    case "recovery-incomplete":
+      lines.push("Plugin recovery is incomplete.");
+      break;
+    case "committed-cleanup-incomplete":
+      lines.push("The Plugin change committed, but cleanup is incomplete.");
+      break;
+    case "unknown":
+      if (failure.requestedChangeBegan === false) lines.push("The requested Plugin change did not begin.");
+      lines.push("The earlier Plugin transaction outcome is unknown.");
+      break;
+  }
+  if (failure.updatedPluginIds.length > 0) lines.push(`Already updated: ${failure.updatedPluginIds.join(", ")}.`);
+  for (const cleanupError of failure.cleanupErrors) lines.push(`Cleanup failed: ${cleanupError.message}`);
+  return lines;
+}
+
+function pluginFailureGuidance(view: PluginActivityView): string {
+  if (view.failure instanceof PluginOperationFailure) {
+    if (pluginFailureRequiresRecoveryStatus(view.failure)) {
+      return "Run atlas-core recover status and resolve the reported recovery or cleanup problem before retrying.";
+    }
+    if (view.failure.outcome === "restored") {
+      return "Review Plugin status before retrying the Plugin operation.";
+    }
+    return "Correct the rejected request, then retry the Plugin operation.";
   }
   if (view.snapshot?.status === "stopped") {
     return "Resolve the reported Plugin error, then retry the Plugin operation while Atlas Core remains stopped.";
@@ -2997,7 +3037,10 @@ async function captureOperationResult<T>(operation: () => Promise<T>): Promise<O
   } catch (error) {
     return error instanceof CommandCancelledError
       ? { cancelled: true }
-      : { cancelled: false, failure: new Error(errorMessage(error)) };
+      : {
+          cancelled: false,
+          failure: error instanceof PluginOperationFailure ? error : new Error(errorMessage(error))
+        };
   }
 }
 

@@ -105,9 +105,10 @@ images, or third-party bundles.
 
 Enabling a Plugin pulls the catalog's immutable image digest, stages its private Compose and configuration fragments,
 validates the complete Compose model, and then commits the new state. A running deployment starts the Plugin and
-restarts Core and Source Gateway with a health wait. A stopped deployment stays stopped. Failure restores the previous
-files, state, and running composition. Disabling first validates the candidate deployment, records a small durable intent
-with the deployed Plugin metadata, and commits the Plugin's disabled state before removing its container or files. An
+restarts Core and Source Gateway with a health wait. A stopped deployment stays stopped. If a later step fails, the
+manager uses its transaction evidence to recover or retain the state needed for recovery. Disabling first validates the
+candidate deployment, records a small durable intent with the deployed Plugin metadata, and commits the Plugin's
+disabled state before removing its container or files. An
 interrupted disable is retried idempotently from either side of that state commit. A later enable first finishes the
 Plugin-free runtime and pending disable before pulling or staging the Plugin again. `stop` durably changes every pending
 disable target to stopped before it runs Compose down with orphan removal, then settles the files while Core remains
@@ -122,6 +123,27 @@ daemon and retry the command to remove its lock and continue.
 Disabling keeps the cached image. Independent Plugin mutations use the installed Core's retained bundle and exact image,
 so a Plugin update does not publish or install a new Core version. Status and logs remain available after a CLI-only
 update. Direct commands print each mutation stage.
+
+Plugin mutation failures have five evidence-based outcomes in both direct commands and the TUI:
+
+- A rejected request did not begin changing the requested Plugin state. The CLI explains the rejection without claiming
+  a rollback.
+- A restored operation failed or was cancelled, but the manager completed the required recovery of the previous state.
+- Incomplete recovery leaves transaction evidence for `atlas-core recover status`. Inspect it before retrying the
+  mutation.
+- A committed change with incomplete cleanup remains committed. Inspect `atlas-core recover status` before another
+  mutation instead of repeating the command blindly. If only the outer deployment lock remains, status reports its
+  owner and directs `atlas-core recover retry` after that owner exits.
+- An unknown outcome means the retained evidence cannot establish whether an earlier transaction committed or restored.
+  The CLI reports what it can establish, retains the evidence, and does not claim that the deployment is unchanged.
+
+A restored result describes transaction recovery, not current Plugin health or whether Atlas is running. A Plugin that
+was unavailable before the change may remain unavailable after recovery, and a stopped deployment remains stopped.
+`atlas-core plugins update <plugin_id|all>` handles Ctrl-C as a cancellation request and waits for the current Plugin
+transaction to reach a safe terminal result. Completed cancellation exits 130. Incomplete recovery or cleanup remains a
+failure and exits 1. With `update all`, each earlier successful update stays committed and the summary names those
+Plugins when a later update fails or is cancelled. A cancellation request received after a commit does not undo or
+relabel that commit.
 
 The host manager provisions and rotates its shared SDK Plugin key through the host-only `atlas_core managed-keys`
 executable inside the exact running Core container. The subcommands are `create <name>`, `list <name>`, and

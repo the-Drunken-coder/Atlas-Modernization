@@ -1,3 +1,4 @@
+import { PluginOperationFailure } from "./operation-errors.js";
 import type {
   AtlasCoreOperator,
   DeploymentService,
@@ -148,6 +149,16 @@ export function createPreviewOperator(
     });
   };
 
+  const rejectedPluginFailure = (pluginId: string, error: unknown): PluginOperationFailure =>
+    error instanceof PluginOperationFailure
+      ? error
+      : new PluginOperationFailure({
+          outcome: "rejected",
+          operationError: error,
+          pluginId,
+          requestedChangeBegan: false
+        });
+
   const runLifecycle = async (
     operation: LifecycleOperation,
     report?: (progress: LifecycleOperationProgress) => void,
@@ -255,15 +266,18 @@ export function createPreviewOperator(
   ): Promise<PluginOperationOutcome> => {
     const plugin = requirePreviewPlugin(pluginId);
     if (deploymentState === "not-initialized") {
-      throw new Error("Atlas Core is not initialized. Run atlas-core init first.");
+      throw rejectedPluginFailure(pluginId, new Error("Atlas Core is not initialized. Run atlas-core init first."));
     }
 
     const action = enabled ? "Enable" : "Disable";
     const previousEnabled = enabledPlugins.has(pluginId);
     if (deploymentState === "degraded" && previousEnabled !== enabled) {
-      throw new Error(
-        "Plugin changes require the current deployment to be fully healthy: minio is unhealthy. " +
-          "Restore every Core and enabled Plugin service, or stop the deployment completely, before retrying."
+      throw rejectedPluginFailure(
+        pluginId,
+        new Error(
+          "Plugin changes require the current deployment to be fully healthy: minio is unhealthy. " +
+            "Restore every Core and enabled Plugin service, or stop the deployment completely, before retrying."
+        )
       );
     }
     reportActivity?.({ level: "working", message: "Checking fixture Plugin state", stage: "operation" });
@@ -375,12 +389,17 @@ export function createPreviewOperator(
     async pluginInstall(pluginId, version, reportActivity): Promise<PluginOperationOutcome> {
       const plugin = requirePreviewPlugin(pluginId);
       if (deploymentState === "not-initialized") {
-        throw new Error("Atlas Core is not initialized. Run atlas-core init first.");
+        throw rejectedPluginFailure(pluginId, new Error("Atlas Core is not initialized. Run atlas-core init first."));
       }
-      if (installedPlugins.has(pluginId)) throw new Error(`Plugin ${pluginId} is already installed; use update.`);
+      if (installedPlugins.has(pluginId)) {
+        throw rejectedPluginFailure(pluginId, new Error(`Plugin ${pluginId} is already installed; use update.`));
+      }
       const selectedVersion = version ?? PREVIEW_PLUGIN_VERSIONS[0];
       if (!PREVIEW_PLUGIN_VERSIONS.includes(selectedVersion as (typeof PREVIEW_PLUGIN_VERSIONS)[number])) {
-        throw new Error(`Unknown fixture Plugin release ${pluginId} ${selectedVersion}.`);
+        throw rejectedPluginFailure(
+          pluginId,
+          new Error(`Unknown fixture Plugin release ${pluginId} ${selectedVersion}.`)
+        );
       }
       reportActivity?.({ level: "working", message: "Checking fixture Plugin catalog", stage: "operation" });
       await waitForPluginStep();
@@ -511,12 +530,15 @@ export function createPreviewOperator(
     async pluginUpdate(pluginId, reportActivity, reviewedPlan) {
       const plugin = requirePreviewPlugin(pluginId);
       const installed = installedPlugins.get(pluginId);
-      if (!installed) throw new Error(`Plugin ${pluginId} is not installed.`);
+      if (!installed) throw rejectedPluginFailure(pluginId, new Error(`Plugin ${pluginId} is not installed.`));
       const nextVersion = PREVIEW_PLUGIN_VERSIONS[0];
       if (reviewedPlan) {
         const currentPlan = await this.pluginUpdatePlan?.(pluginId);
         if (!currentPlan || !samePluginUpdatePlan(reviewedPlan, currentPlan)) {
-          throw new Error("The reviewed Plugin update details changed. Review the update again.");
+          throw rejectedPluginFailure(
+            pluginId,
+            new Error("The reviewed Plugin update details changed. Review the update again.")
+          );
         }
       }
       if (installed.selectedVersion === nextVersion) return { status: "success" };
@@ -544,8 +566,10 @@ export function createPreviewOperator(
     async pluginRollback(pluginId) {
       const plugin = requirePreviewPlugin(pluginId);
       const installed = installedPlugins.get(pluginId);
-      if (!installed) throw new Error(`Plugin ${pluginId} is not installed.`);
-      if (!installed.previousVersion) throw new Error(`Plugin ${pluginId} has no previous release to roll back to.`);
+      if (!installed) throw rejectedPluginFailure(pluginId, new Error(`Plugin ${pluginId} is not installed.`));
+      if (!installed.previousVersion) {
+        throw rejectedPluginFailure(pluginId, new Error(`Plugin ${pluginId} has no previous release to roll back to.`));
+      }
       installedPlugins.set(pluginId, {
         previousVersion: installed.selectedVersion,
         selectedVersion: installed.previousVersion
@@ -554,8 +578,12 @@ export function createPreviewOperator(
     },
     async pluginUninstall(pluginId) {
       const plugin = requirePreviewPlugin(pluginId);
-      if (enabledPlugins.has(pluginId)) throw new Error(`Plugin ${pluginId} must be disabled before uninstall.`);
-      if (!installedPlugins.delete(pluginId)) throw new Error(`Plugin ${pluginId} is not installed.`);
+      if (enabledPlugins.has(pluginId)) {
+        throw rejectedPluginFailure(pluginId, new Error(`Plugin ${pluginId} must be disabled before uninstall.`));
+      }
+      if (!installedPlugins.delete(pluginId)) {
+        throw rejectedPluginFailure(pluginId, new Error(`Plugin ${pluginId} is not installed.`));
+      }
       preview(`Uninstalled ${plugin.displayName}.`);
     },
     async pluginRefresh() {

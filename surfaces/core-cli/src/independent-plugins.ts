@@ -27,6 +27,7 @@ import type {
 } from "./deployment-transaction.js";
 import { DeploymentTransactionStore as DurableDeploymentTransactionStore } from "./deployment-transaction.js";
 import type { ImageReceipt } from "./image-receipts.js";
+import { CommandCancelledError, type PluginFailureOutcome, PluginOperationFailure } from "./operation-errors.js";
 import {
   assertPluginCompatible,
   comparePluginVersions,
@@ -1283,57 +1284,69 @@ export class IndependentPluginManager {
 
   /** Finish the same file and runtime rollback after an exception or a process restart. */
   async recover(transaction: DeploymentTransaction): Promise<void> {
-    const journal = transaction.read();
-    if (!isPluginLifecycleOperation(journal.operation)) throw new Error("Not a Plugin lifecycle transaction.");
-    if (journal.owner.dockerEngineId !== this.#host.dockerEngineId) {
-      throw new Error("Pending transaction belongs to another Docker engine.");
-    }
-    if (journal.phase === "committed") {
-      await transaction.cleanup();
-      return;
-    }
-    const restoreRuntime =
-      journal.phase !== "prepared" &&
-      ["plugin-enable", "plugin-disable", "plugin-update", "plugin-rollback"].includes(journal.operation);
-    const affectedIds = new Set(
-      Object.keys(journal.snapshots).flatMap((path) => {
-        const match = /^plugins\/([^/]+)\//u.exec(path);
-        return match?.[1] ? [match[1]] : [];
-      })
-    );
-    // Restore active files and membership before constructing Compose. A completed
-    // file rollback remains pending until runtime restoration and verification pass.
-    await transaction.rollback();
-    const enabled = [...(await this.#host.readEnabled())];
-    if (restoreRuntime && journal.previousRunning) {
-      if (this.#host.readDesiredRunning?.() ?? journal.desiredRunning) {
-        await this.regenerateActiveFiles({ allowImageRepull: true });
-        const restoredIds = enabled.filter((id) => affectedIds.has(id));
-        const restoredUnhealthyIds = journal.recovery?.priorPluginHealthy === false ? restoredIds : [];
-        const restoredHealthyIds = restoredIds.filter((id) => !restoredUnhealthyIds.includes(id));
-        await this.#host.runCompose(
-          recreateServices(["api", "source-gateway", ...restoredHealthyIds.map(serviceName)], true),
-          enabled,
-          true
-        );
-        if (restoredUnhealthyIds.length) {
+    let establishedOutcome: PluginFailureOutcome | undefined;
+    try {
+      const journal = transaction.read();
+      if (!isPluginLifecycleOperation(journal.operation)) throw new Error("Not a Plugin lifecycle transaction.");
+      establishedOutcome = journal.phase === "committed" ? "committed-cleanup-incomplete" : "recovery-incomplete";
+      if (journal.owner.dockerEngineId !== this.#host.dockerEngineId) {
+        throw new Error("Pending transaction belongs to another Docker engine.");
+      }
+      if (journal.phase === "committed") {
+        await transaction.cleanup();
+        return;
+      }
+      const restoreRuntime =
+        journal.phase !== "prepared" &&
+        ["plugin-enable", "plugin-disable", "plugin-update", "plugin-rollback"].includes(journal.operation);
+      const affectedIds = new Set(
+        Object.keys(journal.snapshots).flatMap((path) => {
+          const match = /^plugins\/([^/]+)\//u.exec(path);
+          return match?.[1] ? [match[1]] : [];
+        })
+      );
+      // Restore active files and membership before constructing Compose. A completed
+      // file rollback remains pending until runtime restoration and verification pass.
+      await transaction.rollback();
+      const enabled = [...(await this.#host.readEnabled())];
+      if (restoreRuntime && journal.previousRunning) {
+        if (this.#host.readDesiredRunning?.() ?? journal.desiredRunning) {
+          await this.regenerateActiveFiles({ allowImageRepull: true });
+          const restoredIds = enabled.filter((id) => affectedIds.has(id));
+          const restoredUnhealthyIds = journal.recovery?.priorPluginHealthy === false ? restoredIds : [];
+          const restoredHealthyIds = restoredIds.filter((id) => !restoredUnhealthyIds.includes(id));
           await this.#host.runCompose(
-            recreateServices(restoredUnhealthyIds.map(serviceName), true, false),
+            recreateServices(["api", "source-gateway", ...restoredHealthyIds.map(serviceName)], true),
             enabled,
             true
           );
+          if (restoredUnhealthyIds.length) {
+            await this.#host.runCompose(
+              recreateServices(restoredUnhealthyIds.map(serviceName), true, false),
+              enabled,
+              true
+            );
+          }
+          for (const id of restoredIds) {
+            const selected = this.readSelectedRecord(id);
+            await this.#host.verifyRuntime(selected.release, selected.receipt, {
+              requireHealth: !restoredUnhealthyIds.includes(id)
+            });
+          }
+        } else {
+          await this.#host.runCompose(["down", "--remove-orphans"], enabled, true);
         }
-        for (const id of restoredIds) {
-          const selected = this.readSelectedRecord(id);
-          await this.#host.verifyRuntime(selected.release, selected.receipt, {
-            requireHealth: !restoredUnhealthyIds.includes(id)
-          });
-        }
-      } else {
-        await this.#host.runCompose(["down", "--remove-orphans"], enabled, true);
       }
+      await transaction.cleanup();
+    } catch (error) {
+      if (error instanceof PluginOperationFailure) throw error;
+      throw new PluginOperationFailure({
+        outcome: establishedOutcome ?? this.#readRecoveryFailureOutcome(transaction),
+        operationError: error,
+        cancelled: error instanceof CommandCancelledError,
+        requestedChangeBegan: false
+      });
     }
-    await transaction.cleanup();
   }
 
   async #runTransaction(
@@ -1360,13 +1373,40 @@ export class IndependentPluginManager {
     } catch (error) {
       try {
         await this.#host.withRecovery(() => this.recover(transaction));
-      } catch (rollbackError) {
-        throw new Error(`${errorMessage(error)} Recovery is required: ${errorMessage(rollbackError)}`);
+      } catch (recoveryFailure) {
+        const typedRecovery = recoveryFailure instanceof PluginOperationFailure ? recoveryFailure : undefined;
+        let outcome: PluginFailureOutcome;
+        if (committed) outcome = "committed-cleanup-incomplete";
+        else if (typedRecovery && typedRecovery.outcome !== "unknown") outcome = typedRecovery.outcome;
+        else outcome = this.#readRecoveryFailureOutcome(transaction);
+        const recoveryError = typedRecovery?.operationError ?? recoveryFailure;
+        throw new PluginOperationFailure({
+          outcome,
+          operationError: error,
+          ...(outcome === "committed-cleanup-incomplete" ? { cleanupErrors: [recoveryError] } : { recoveryError }),
+          cancelled: error instanceof CommandCancelledError,
+          requestedChangeBegan: true
+        });
       }
       if (committed) return;
-      throw error;
+      throw new PluginOperationFailure({
+        outcome: "restored",
+        operationError: error,
+        cancelled: error instanceof CommandCancelledError,
+        requestedChangeBegan: true
+      });
     } finally {
       this.#activeTransaction = undefined;
+    }
+  }
+
+  #readRecoveryFailureOutcome(transaction: DeploymentTransaction): PluginFailureOutcome {
+    try {
+      const journal = transaction.read();
+      if (!isPluginLifecycleOperation(journal.operation)) return "unknown";
+      return journal.phase === "committed" ? "committed-cleanup-incomplete" : "recovery-incomplete";
+    } catch {
+      return "unknown";
     }
   }
 
