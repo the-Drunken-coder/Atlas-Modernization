@@ -60,6 +60,30 @@ type OperationResult<T> = {
   value?: T;
 };
 
+type TrackedOperationKind = "lifecycle" | "plugin" | "plugin-plan" | "update";
+
+type TrackedOperation = {
+  id: number;
+  kind: TrackedOperationKind;
+};
+
+type OperationInterruption = {
+  cancellationRequested: boolean;
+  intent?: "return" | "exit";
+  kind: TrackedOperationKind;
+};
+
+type OperationCoordination = {
+  activeKind(): TrackedOperationKind | undefined;
+  clearFailure(): void;
+  exitError(operationFailure?: Error): Error | undefined;
+  interrupt(intent: "return" | "exit", terminalLossError?: Error): TrackedOperationKind | undefined;
+  isCurrent(operation: TrackedOperation): boolean;
+  settle(operation: TrackedOperation, failure?: Error): OperationInterruption | undefined;
+  start(kind: TrackedOperationKind): TrackedOperation;
+  terminalLost(): boolean;
+};
+
 type LifecycleOperationEvent = LifecycleOperationProgress & { elapsedMs: number };
 
 type Notice = {
@@ -171,24 +195,12 @@ async function runInkApp(
 
 function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
   const { exit, waitUntilRenderFlush } = useApp();
-  const activePluginOperation = useRef<number | undefined>(undefined);
-  const activePluginPlan = useRef<number | undefined>(undefined);
-  const activeLifecycleOperation = useRef<number | undefined>(undefined);
-  const activeUpdateOperation = useRef<number | undefined>(undefined);
-  const lifecycleOperationGeneration = useRef(0);
-  const updateOperationGeneration = useRef(0);
-  const lifecycleCancellation = useRef<"return" | "exit" | undefined>(undefined);
-  const updateCancellation = useRef<"return" | "exit" | undefined>(undefined);
-  const pluginCancellationRequested = useRef(false);
-  const pluginCancellation = useRef<"return" | "exit" | undefined>(undefined);
-  const pluginOperationGeneration = useRef(0);
-  const pluginPlanCancellation = useRef(false);
-  const pluginPlanGeneration = useRef(0);
+  const coordinationRef = useRef<OperationCoordination | undefined>(undefined);
+  coordinationRef.current ??= createOperationCoordination(() => operator.cancelPending());
+  const coordination = coordinationRef.current;
   const statusAbortController = useRef<AbortController | undefined>(undefined);
   const statusGeneration = useRef(0);
   const statusReadPending = useRef<Promise<StatusView> | undefined>(undefined);
-  const terminalLost = useRef(false);
-  const terminalLossError = useRef<Error | undefined>(undefined);
   const [screen, setScreen] = useState<Screen>({
     kind: "busy",
     label: initialLoadingLabel(mode)
@@ -196,15 +208,16 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
 
   const loadMenu = useCallback(
     async (notice?: Notice) => {
+      coordination.clearFailure();
       setScreen({ kind: "busy", label: "Checking deployment..." });
       setScreen({ kind: "menu", snapshot: await readSnapshot(operator), ...(notice ? { notice } : {}) });
     },
-    [operator]
+    [coordination, operator]
   );
 
   const readStatus = useCallback(
     async (fresh: boolean, signal: AbortSignal): Promise<StatusView> => {
-      while (statusReadPending.current) {
+      while (statusReadPending.current !== undefined) {
         const view = await statusReadPending.current;
         if (!fresh) return view;
       }
@@ -249,22 +262,24 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
   }, []);
 
   const loadUpdate = useCallback(async () => {
+    coordination.clearFailure();
     setScreen({ kind: "busy", label: "Checking npm for the latest release..." });
     try {
       setScreen({ kind: "update", info: await operator.checkForUpdates() });
     } catch (error) {
       setScreen({ kind: "update-error", message: errorMessage(error) });
     }
-  }, [operator]);
+  }, [coordination, operator]);
 
   const loadPlugins = useCallback(async () => {
+    coordination.clearFailure();
     setScreen({ kind: "busy", label: "Loading Plugins..." });
     try {
       setScreen({ kind: "plugins", view: await operator.pluginStatuses() });
     } catch (error) {
       setScreen({ kind: "plugins", view: new Error(errorMessage(error)) });
     }
-  }, [operator]);
+  }, [coordination, operator]);
 
   useEffect(() => {
     if (mode === "configure") setScreen({ kind: "password" });
@@ -272,65 +287,47 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
     else void loadMenu();
   }, [loadMenu, loadUpdate, mode]);
 
+  const interruptActiveOperation = useCallback(
+    (intent: "return" | "exit", message: string, terminalLossError?: Error): boolean => {
+      const kind = coordination.interrupt(intent, terminalLossError);
+      if (!kind) return false;
+      if (kind === "lifecycle") {
+        setScreen((current) => lifecycleCancellationScreen(current, message));
+      } else if (kind === "update") {
+        setScreen((current) => updateCancellationScreen(current, message));
+      } else if (kind === "plugin") {
+        setScreen((current) => pluginActivityCancellationScreen(current, message));
+      }
+      return true;
+    },
+    [coordination]
+  );
+
+  useEffect(() => {
+    const onInterrupt = (): void => {
+      if (!interruptActiveOperation("exit", "Cancellation requested. Waiting for safe cleanup.")) {
+        exit(coordination.exitError());
+      }
+    };
+    process.on("SIGINT", onInterrupt);
+    return () => {
+      process.off("SIGINT", onInterrupt);
+    };
+  }, [coordination, exit, interruptActiveOperation]);
+
   useEffect(() => {
     const onEnd = (): void => {
-      terminalLost.current = true;
-      operator.cancelPending();
       const error = new Error("Atlas Core lost its terminal input.");
-      terminalLossError.current = error;
-      if (
-        activeLifecycleOperation.current === undefined &&
-        activeUpdateOperation.current === undefined &&
-        activePluginPlan.current === undefined &&
-        activePluginOperation.current === undefined
-      )
-        exit(error);
-      else {
-        if (activeLifecycleOperation.current !== undefined) {
-          lifecycleCancellation.current = "exit";
-          setScreen((current) =>
-            lifecycleCancellationScreen(current, "Terminal input lost. Waiting for safe cleanup.")
-          );
-        } else if (activeUpdateOperation.current !== undefined) {
-          updateCancellation.current = "exit";
-          setScreen((current) => updateCancellationScreen(current, "Terminal input lost. Waiting for safe cleanup."));
-        } else if (activePluginOperation.current !== undefined) {
-          pluginCancellationRequested.current = true;
-          pluginCancellation.current = "exit";
-          setScreen((current) =>
-            pluginActivityCancellationScreen(current, "Terminal input lost. Waiting for safe cleanup.")
-          );
-        } else pluginPlanCancellation.current = true;
+      if (!interruptActiveOperation("exit", "Terminal input lost. Waiting for safe cleanup.", error)) {
+        operator.cancelPending();
+        exit(coordination.exitError());
       }
     };
     const onError = (error: Error): void => {
-      terminalLost.current = true;
-      operator.cancelPending();
       const terminalError = new Error(`Atlas Core lost its terminal input: ${error.message}`);
-      terminalLossError.current = terminalError;
-      if (
-        activeLifecycleOperation.current === undefined &&
-        activeUpdateOperation.current === undefined &&
-        activePluginPlan.current === undefined &&
-        activePluginOperation.current === undefined
-      )
-        exit(terminalError);
-      else {
-        if (activeLifecycleOperation.current !== undefined) {
-          lifecycleCancellation.current = "exit";
-          setScreen((current) =>
-            lifecycleCancellationScreen(current, "Terminal input lost. Waiting for safe cleanup.")
-          );
-        } else if (activeUpdateOperation.current !== undefined) {
-          updateCancellation.current = "exit";
-          setScreen((current) => updateCancellationScreen(current, "Terminal input lost. Waiting for safe cleanup."));
-        } else if (activePluginOperation.current !== undefined) {
-          pluginCancellationRequested.current = true;
-          pluginCancellation.current = "exit";
-          setScreen((current) =>
-            pluginActivityCancellationScreen(current, "Terminal input lost. Waiting for safe cleanup.")
-          );
-        } else pluginPlanCancellation.current = true;
+      if (!interruptActiveOperation("exit", "Terminal input lost. Waiting for safe cleanup.", terminalError)) {
+        operator.cancelPending();
+        exit(coordination.exitError());
       }
     };
     input.once("end", onEnd);
@@ -339,16 +336,12 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
       input.off("end", onEnd);
       input.off("error", onError);
     };
-  }, [exit, input, operator]);
+  }, [coordination, exit, input, interruptActiveOperation, operator]);
 
   const runLifecycleOperation = useCallback(
     async (operation: LifecycleOperation, options: LifecycleRunOptions = {}): Promise<void> => {
-      const operationId = lifecycleOperationGeneration.current + 1;
-      lifecycleOperationGeneration.current = operationId;
+      const trackedOperation = coordination.start("lifecycle");
       const startedAt = Date.now();
-      activeLifecycleOperation.current = operationId;
-      lifecycleCancellation.current = undefined;
-      terminalLossError.current = undefined;
       setScreen({
         kind: "operation",
         view: {
@@ -360,7 +353,7 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
       });
       await waitUntilRenderFlush();
       const report = (progress: LifecycleOperationProgress): void => {
-        if (activeLifecycleOperation.current !== operationId) return;
+        if (!coordination.isCurrent(trackedOperation)) return;
         setScreen((current) =>
           current.kind === "operation"
             ? {
@@ -373,18 +366,45 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
             : current
         );
       };
-      const result = await runCancelableOperation(operator, async () => {
+      const result = await captureOperationResult(async () => {
         if (Object.keys(options).length > 0) return await operator.runLifecycle(operation, report, options);
         return await operator.runLifecycle(operation, report);
       });
-      activeLifecycleOperation.current = undefined;
       const lifecycleResult = result.value;
       const cancelled = result.cancelled || lifecycleResult?.status === "cancelled";
-      if (cancelled || lifecycleCancellation.current !== undefined) operator.resumeAfterCancellation();
-      if (result.cancelled && lifecycleCancellation.current === undefined) lifecycleCancellation.current = "exit";
-      const terminalExit = lifecycleCancellation.current === "exit";
-      if (cancelled && !terminalExit && !terminalLost.current) {
-        lifecycleCancellation.current = undefined;
+      const failure = result.failure
+        ? { error: result.failure.message }
+        : lifecycleResult?.status === "failure"
+          ? { error: lifecycleResult.error, snapshot: lifecycleResult.snapshot }
+          : undefined;
+      const operationFailure = result.failure ?? (failure ? new Error(failure.error) : undefined);
+      const interruption = coordination.settle(trackedOperation, operationFailure);
+      if (!interruption) return;
+      if (cancelled || interruption.cancellationRequested) operator.resumeAfterCancellation();
+      const intent = interruption.intent ?? (result.cancelled ? "exit" : undefined);
+      if (intent === "exit") {
+        if (failure) {
+          const snapshot = "snapshot" in failure ? failure.snapshot : undefined;
+          setScreen((current) =>
+            current.kind === "operation"
+              ? {
+                  ...current,
+                  view: {
+                    ...current.view,
+                    completedAt: Date.now(),
+                    error: failure.error,
+                    ...(snapshot ? { snapshot } : {}),
+                    status: "failure"
+                  }
+                }
+              : current
+          );
+          await waitUntilRenderFlush();
+        }
+        exit(coordination.exitError(operationFailure));
+        return;
+      }
+      if (cancelled) {
         if (mode === "configure") setScreen({ kind: "password" });
         else {
           await loadMenu({
@@ -393,15 +413,6 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
             tone: "yellow"
           });
         }
-        return;
-      }
-      const failure = result.failure
-        ? { error: result.failure.message }
-        : lifecycleResult?.status === "failure"
-          ? { error: lifecycleResult.error, snapshot: lifecycleResult.snapshot }
-          : undefined;
-      if (terminalExit) {
-        exit(result.failure ?? (failure ? new Error(failure.error) : terminalLossError.current));
         return;
       }
       const snapshot = failure && "snapshot" in failure ? failure.snapshot : undefined;
@@ -415,8 +426,7 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
                 ...(failure ? { error: failure.error } : {}),
                 ...(snapshot ? { snapshot } : {}),
                 ...(lifecycleResult?.status === "success" ? { summary: lifecycleResult.summary } : {}),
-                ...(lifecycleResult?.status === "cancelled" ? { summary: lifecycleResult.summary } : {}),
-                status: failure ? "failure" : cancelled ? "cancelled" : "success"
+                status: failure ? "failure" : "success"
               }
             }
           : current
@@ -424,23 +434,18 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
       if (lifecycleResult?.status === "success") {
         if (mode === "configure") {
           await waitUntilRenderFlush();
-          exit();
+          exit(coordination.exitError());
         } else await loadMenu({ message: lifecycleResult.summary, tone: "green" });
       }
     },
-    [exit, loadMenu, mode, operator, waitUntilRenderFlush]
+    [coordination, exit, loadMenu, mode, operator, waitUntilRenderFlush]
   );
 
   const cancelLifecycleOperation = useCallback(
     (disposition: "return" | "exit") => {
-      if (activeLifecycleOperation.current === undefined) return;
-      const cancellationRequested = lifecycleCancellation.current !== undefined;
-      if (disposition === "exit") lifecycleCancellation.current = "exit";
-      else lifecycleCancellation.current ??= "return";
-      if (!cancellationRequested) operator.cancelPending();
-      setScreen((current) => lifecycleCancellationScreen(current, "Cancellation requested. Waiting for safe cleanup."));
+      interruptActiveOperation(disposition, "Cancellation requested. Waiting for safe cleanup.");
     },
-    [operator]
+    [interruptActiveOperation]
   );
 
   const runPluginActivity = useCallback(
@@ -455,12 +460,9 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
       plugin: PluginDeploymentStatus;
       targetVersion?: string;
     }) => {
-      const operationId = pluginOperationGeneration.current + 1;
-      pluginOperationGeneration.current = operationId;
-      activePluginOperation.current = operationId;
+      const trackedOperation = coordination.start("plugin");
+      const operationId = trackedOperation.id;
       const startedAt = Date.now();
-      pluginCancellationRequested.current = false;
-      pluginCancellation.current = undefined;
       setScreen({
         kind: "plugin-activity",
         view: {
@@ -482,7 +484,7 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
       });
       await waitUntilRenderFlush();
       const reportActivity: PluginActivityReporter = (activity) => {
-        if (activePluginOperation.current !== operationId) return;
+        if (!coordination.isCurrent(trackedOperation)) return;
         setScreen((current) =>
           current.kind === "plugin-activity" && current.view.operationId === operationId
             ? {
@@ -495,20 +497,16 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
             : current
         );
       };
-      const result = await runCancelableOperation(operator, async () => await operation(reportActivity));
-      if (activePluginOperation.current === operationId) activePluginOperation.current = undefined;
-      const cancellationRequested = pluginCancellationRequested.current || result.cancelled;
-      if (cancellationRequested) operator.resumeAfterCancellation();
-      if (result.cancelled && pluginCancellation.current === undefined) pluginCancellation.current = "exit";
-      if (terminalLost.current) {
-        exit(result.failure ?? terminalLossError.current);
+      const result = await captureOperationResult(async () => await operation(reportActivity));
+      const interruption = coordination.settle(trackedOperation, result.failure);
+      if (!interruption) return;
+      if (interruption.cancellationRequested || result.cancelled) operator.resumeAfterCancellation();
+      const intent = interruption.intent ?? (result.cancelled ? "exit" : undefined);
+      if (intent === "exit") {
+        exit(coordination.exitError(result.failure));
         return;
       }
-      if (pluginCancellation.current === "exit") {
-        exit(result.failure);
-        return;
-      }
-      if (pluginCancellation.current === "return" && !result.failure && result.value?.status !== "success") {
+      if (intent === "return" && !result.failure && result.value?.status !== "success") {
         await loadPlugins();
         return;
       }
@@ -520,6 +518,7 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
           snapshot = undefined;
         }
       }
+      if (coordination.terminalLost()) return;
       setScreen((current) => {
         if (current.kind !== "plugin-activity" || current.view.operationId !== operationId) return current;
         const status = result.failure
@@ -541,7 +540,7 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
         };
       });
     },
-    [exit, loadPlugins, operator, waitUntilRenderFlush]
+    [coordination, exit, loadPlugins, operator, waitUntilRenderFlush]
   );
 
   const togglePlugin = useCallback(
@@ -560,36 +559,9 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
 
   const cancelPluginActivity = useCallback(
     (disposition: "return" | "exit") => {
-      const operationId = activePluginOperation.current;
-      if (disposition === "exit") pluginCancellation.current = "exit";
-      else pluginCancellation.current ??= "return";
-      if (operationId === undefined || pluginCancellationRequested.current) return;
-      pluginCancellationRequested.current = true;
-      operator.cancelPending();
-      setScreen((current) =>
-        current.kind === "plugin-activity" &&
-        current.view.operationId === operationId &&
-        current.view.status === "running"
-          ? {
-              ...current,
-              view: {
-                ...current.view,
-                events: [
-                  ...current.view.events,
-                  {
-                    elapsedMs: Date.now() - current.view.startedAt,
-                    level: "working",
-                    message: "Cancellation requested. Waiting for safe cleanup",
-                    stage: "operation"
-                  }
-                ],
-                status: "cancelling"
-              }
-            }
-          : current
-      );
+      interruptActiveOperation(disposition, "Cancellation requested. Waiting for safe cleanup.");
     },
-    [operator]
+    [interruptActiveOperation]
   );
 
   const openPluginLogViewer = useCallback(
@@ -645,27 +617,24 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
         setScreen({ kind: "plugin-update-review", plan: plugin.updatePlan });
         return;
       }
-      const operationId = pluginPlanGeneration.current + 1;
-      pluginPlanGeneration.current = operationId;
-      activePluginPlan.current = operationId;
-      pluginPlanCancellation.current = false;
+      const trackedOperation = coordination.start("plugin-plan");
       setScreen({ kind: "busy", label: `Checking updates for ${plugin.displayName}...` });
       await waitUntilRenderFlush();
-      const result = await runCancelableOperation(
-        operator,
-        async () => await operator.pluginUpdatePlan!(plugin.pluginId)
-      );
-      if (activePluginPlan.current !== operationId) return;
-      activePluginPlan.current = undefined;
-      if (pluginPlanCancellation.current || result.cancelled || terminalLost.current) {
+      const result = await captureOperationResult(async () => await operator.pluginUpdatePlan!(plugin.pluginId));
+      const interruption = coordination.settle(trackedOperation, result.failure);
+      if (!interruption) return;
+      if (interruption.cancellationRequested || result.cancelled) {
+        operator.resumeAfterCancellation();
+      }
+      if (interruption.intent === "exit" || result.cancelled) {
         await waitUntilRenderFlush();
-        exit(result.failure ?? terminalLossError.current);
+        exit(coordination.exitError(result.failure));
         return;
       }
       if (result.failure) setScreen({ kind: "plugins", view: result.failure });
       else if (result.value) setScreen({ kind: "plugin-update-review", plan: result.value });
     },
-    [exit, operator, waitUntilRenderFlush]
+    [coordination, exit, operator, waitUntilRenderFlush]
   );
 
   const updatePlugin = useCallback(
@@ -733,10 +702,7 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
 
   const applyUpdate = useCallback(
     async (info: UpdateInfo, scope: UpdateScope) => {
-      const operationId = updateOperationGeneration.current + 1;
-      updateOperationGeneration.current = operationId;
-      activeUpdateOperation.current = operationId;
-      updateCancellation.current = undefined;
+      const trackedOperation = coordination.start("update");
       const startedAt = Date.now();
       setScreen({
         kind: "update-operation",
@@ -757,7 +723,7 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
       });
       await waitUntilRenderFlush();
       const report: UpdateReporter = (progress) => {
-        if (activeUpdateOperation.current !== operationId) return;
+        if (!coordination.isCurrent(trackedOperation)) return;
         setScreen((current) =>
           current.kind === "update-operation"
             ? {
@@ -770,15 +736,13 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
             : current
         );
       };
-      const result = await runCancelableOperation(operator, async () => {
+      const result = await captureOperationResult(async () => {
         await operator.updateWithProgress(scope, info.latestVersion, report);
       });
-      activeUpdateOperation.current = undefined;
-      const requestedCancellation = updateCancellation.current;
-      if ((result.cancelled || requestedCancellation !== undefined) && !terminalLost.current) {
-        operator.resumeAfterCancellation();
-      }
-      if (result.cancelled && requestedCancellation === undefined) updateCancellation.current = "exit";
+      const interruption = coordination.settle(trackedOperation, result.failure);
+      if (!interruption) return;
+      if (result.cancelled || interruption.cancellationRequested) operator.resumeAfterCancellation();
+      const intent = interruption.intent ?? (result.cancelled ? "exit" : undefined);
       const cancelled = result.cancelled;
       const status = result.failure ? "failure" : cancelled ? "cancelled" : "success";
       setScreen((current) =>
@@ -794,39 +758,36 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
             }
           : current
       );
+      if (intent === "exit") {
+        await waitUntilRenderFlush();
+        exit(coordination.exitError(result.failure));
+        return;
+      }
       const cliUpdateCompleted = status === "success" && updateInvolvesCLI(info, scope);
       if (cliUpdateCompleted) {
         await waitUntilRenderFlush();
-        exit();
+        exit(coordination.exitError());
         return;
       }
-      if (cancelled && requestedCancellation === "return" && !terminalLost.current && !result.failure) {
+      if (cancelled && intent === "return" && !result.failure) {
         if (updateInvolvesCLI(info, scope)) {
           await waitUntilRenderFlush();
-          exit();
+          exit(coordination.exitError());
           return;
         }
-        updateCancellation.current = undefined;
         if (mode === "update") await loadUpdate();
         else await loadMenu({ message: "Update cancelled.", tone: "yellow" });
         return;
       }
-      if (updateCancellation.current === "exit" || terminalLost.current) {
-        exit(result.failure ?? terminalLossError.current);
-      }
     },
-    [exit, loadMenu, loadUpdate, mode, operator, waitUntilRenderFlush]
+    [coordination, exit, loadMenu, loadUpdate, mode, operator, waitUntilRenderFlush]
   );
 
   const cancelUpdateOperation = useCallback(
     (disposition: "return" | "exit") => {
-      if (activeUpdateOperation.current === undefined) return;
-      if (disposition === "exit") updateCancellation.current = "exit";
-      else updateCancellation.current ??= "return";
-      operator.cancelPending();
-      setScreen((current) => updateCancellationScreen(current, "Cancellation requested. Waiting for safe cleanup."));
+      interruptActiveOperation(disposition, "Cancellation requested. Waiting for safe cleanup.");
     },
-    [operator]
+    [interruptActiveOperation]
   );
 
   if (screen.kind === "busy") {
@@ -834,10 +795,12 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
       <BusyScreen
         label={screen.label}
         onCancel={() => {
+          if (coordination.activeKind() === "plugin-plan") {
+            interruptActiveOperation("exit", "Cancellation requested. Waiting for safe cleanup.");
+            return false;
+          }
           operator.cancelPending();
-          if (activePluginPlan.current === undefined) return true;
-          pluginPlanCancellation.current = true;
-          return false;
+          return true;
         }}
       />
     );
@@ -3042,28 +3005,61 @@ async function readSnapshot(operator: AtlasCoreOperator): Promise<DeploymentSnap
   }
 }
 
-async function runCancelableOperation<T>(
-  operator: AtlasCoreOperator,
-  operation: () => Promise<T>
-): Promise<OperationResult<T>> {
-  // Keep Ctrl-C cancellation consistent for both terminal input and process signals.
-  let cancelled = false;
-  const onInterrupt = (): void => {
-    if (cancelled) return;
-    cancelled = true;
-    operator.cancelPending();
-  };
-  process.on("SIGINT", onInterrupt);
+async function captureOperationResult<T>(operation: () => Promise<T>): Promise<OperationResult<T>> {
   try {
     const value = await operation();
-    return { cancelled, value };
+    return { cancelled: false, value };
   } catch (error) {
     return error instanceof CommandCancelledError
       ? { cancelled: true }
-      : { cancelled, failure: new Error(errorMessage(error)) };
-  } finally {
-    process.off("SIGINT", onInterrupt);
+      : { cancelled: false, failure: new Error(errorMessage(error)) };
   }
+}
+
+function createOperationCoordination(cancelPending: () => void): OperationCoordination {
+  let active: (TrackedOperation & { cancellationRequested: boolean; intent?: "return" | "exit" }) | undefined;
+  let generation = 0;
+  let knownFailure: Error | undefined;
+  let terminalLossError: Error | undefined;
+
+  return {
+    activeKind: () => active?.kind,
+    clearFailure: () => {
+      knownFailure = undefined;
+    },
+    exitError: (operationFailure) => operationFailure ?? knownFailure ?? terminalLossError,
+    interrupt: (intent, lostTerminal) => {
+      if (lostTerminal) terminalLossError = lostTerminal;
+      if (!active) return undefined;
+      if (intent === "exit" || active.intent === undefined) active.intent = intent;
+      if (!active.cancellationRequested) {
+        active.cancellationRequested = true;
+        cancelPending();
+      }
+      return active.kind;
+    },
+    isCurrent: (operation) => active?.id === operation.id && active.kind === operation.kind,
+    settle: (operation, failure) => {
+      if (active?.id !== operation.id || active.kind !== operation.kind) return undefined;
+      if (failure) knownFailure = failure;
+      const interruption: OperationInterruption = {
+        cancellationRequested: active.cancellationRequested,
+        kind: active.kind,
+        ...(active.intent ? { intent: active.intent } : {})
+      };
+      active = undefined;
+      return interruption;
+    },
+    start: (kind) => {
+      if (active) throw new Error(`Cannot start ${kind} while ${active.kind} is still active.`);
+      generation += 1;
+      knownFailure = undefined;
+      terminalLossError = undefined;
+      active = { cancellationRequested: false, id: generation, kind };
+      return { id: generation, kind };
+    },
+    terminalLost: () => terminalLossError !== undefined
+  };
 }
 
 function assertInteractive(input: NodeJS.ReadStream, output: NodeJS.WriteStream): void {

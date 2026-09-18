@@ -1434,6 +1434,49 @@ describe("Atlas Core terminal UI", () => {
     await menu;
   });
 
+  it("reports stopped deployment evidence when stop cancellation cannot preserve the running state", async () => {
+    const terminal = new TestTerminal(80, true, 24);
+    const deployment = operator();
+    const stoppedSnapshot = {
+      status: "stopped" as const,
+      canReset: true,
+      detail: "Atlas Core is stopped after cancellation. Durable storage is preserved."
+    };
+    deployment.snapshot.mockResolvedValueOnce({
+      status: "ready",
+      canReset: true,
+      detail: "Everything is healthy."
+    });
+    deployment.snapshot.mockResolvedValueOnce(stoppedSnapshot);
+    let finish: (() => void) | undefined;
+    deployment.runLifecycle.mockImplementationOnce(
+      async (_operation, report) =>
+        await new Promise<LifecycleOperationResult>((resolve) => {
+          report?.({ message: "Services stopped", stage: "operation" });
+          finish = () =>
+            resolve({
+              status: "cancelled",
+              summary: "Stop cancellation completed after services stopped. Atlas Core remains stopped.",
+              snapshot: stoppedSnapshot
+            });
+        })
+    );
+    deployment.cancelPending.mockImplementation(() => finish?.());
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("Stop Atlas Core");
+    terminal.write("\u001b[B".repeat(2));
+    terminal.write("\r");
+    await terminal.waitFor("Services stopped");
+    terminal.write("\u001b");
+
+    await terminal.waitFor("Atlas Core remains stopped.");
+    expect(terminal.text).toContain("Start Atlas Core");
+    expect(terminal.text).not.toContain("existing deployment state was preserved");
+    terminal.write("q");
+    await menu;
+  });
+
   it("upgrades lifecycle Escape cancellation to exit before cleanup completes", async () => {
     const terminal = new TestTerminal(80, true, 24);
     const deployment = operator();
@@ -1482,6 +1525,83 @@ describe("Atlas Core terminal UI", () => {
 
     expect(resolved).toBe(true);
     expect(deployment.cancelPending).toHaveBeenCalledOnce();
+  });
+
+  it("upgrades lifecycle Escape cancellation to process-SIGINT exit without allowing a later Escape downgrade", async () => {
+    const terminal = new TestTerminal(80, true, 24);
+    const deployment = operator();
+    let finish: (() => void) | undefined;
+    deployment.runLifecycle.mockImplementationOnce(
+      async (_operation, report) =>
+        await new Promise<LifecycleOperationResult>((resolve) => {
+          report?.({ message: "Stopping services", stage: "operation" });
+          finish = () =>
+            resolve({
+              previousDeploymentPreserved: true,
+              status: "cancelled",
+              summary: "Stop Atlas Core cancelled."
+            });
+        })
+    );
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+    let settled = false;
+    void menu.finally(() => {
+      settled = true;
+    });
+
+    await terminal.waitFor("Stop Atlas Core");
+    terminal.write("\u001b[B".repeat(2));
+    terminal.write("\r");
+    await terminal.waitFor("Stopping services");
+    terminal.write("\u001b");
+    process.emit("SIGINT", "SIGINT");
+    terminal.write("\u001b");
+    await nextInputTurn();
+
+    expect(settled).toBe(false);
+    expect(deployment.cancelPending).toHaveBeenCalledOnce();
+    finish?.();
+    await expect(menu).resolves.toBeUndefined();
+    expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce();
+  });
+
+  it("propagates a typed lifecycle cleanup failure after Escape and process SIGINT", async () => {
+    const terminal = new TestTerminal(80, true, 24);
+    const deployment = operator();
+    let finish: (() => void) | undefined;
+    deployment.runLifecycle.mockImplementationOnce(
+      async (_operation, report) =>
+        await new Promise<LifecycleOperationResult>((resolve) => {
+          report?.({ message: "Stopping services", stage: "operation" });
+          finish = () =>
+            resolve({
+              status: "failure",
+              error: "Cleanup could not stop the services.",
+              snapshot: {
+                status: "degraded",
+                canReset: true,
+                detail: "Core may still be stopping."
+              }
+            });
+        })
+    );
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("Stop Atlas Core");
+    terminal.write("\u001b[B".repeat(2));
+    terminal.write("\r");
+    await terminal.waitFor("Stopping services");
+    terminal.write("\u001b");
+    process.emit("SIGINT", "SIGINT");
+    terminal.write("\u001b");
+    expect(deployment.cancelPending).toHaveBeenCalledOnce();
+    finish?.();
+
+    await expect(menu).rejects.toThrow("Cleanup could not stop the services.");
+    expect(terminal.text).toContain("Core may");
+    expect(terminal.text).toContain("still be stopping.");
+    expect(terminal.text).not.toContain("Lifecycle operation cancelled.");
+    expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce();
   });
 
   it("keeps a lifecycle cleanup failure visible and resumes the operator", async () => {
@@ -1644,6 +1764,52 @@ describe("Atlas Core terminal UI", () => {
 
     await expect(menu).rejects.toThrow("Rollback cleanup rejected");
     expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce();
+  });
+
+  it("preserves a known Plugin failure when terminal input errors during its deferred snapshot read", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    const plugin = {
+      pluginId: "building_scan",
+      displayName: "Building Scan",
+      lifecycle: "query_only" as const,
+      enabled: false,
+      packaged: true
+    };
+    let rejectEnable: ((error: Error) => void) | undefined;
+    let releaseSnapshot: (() => void) | undefined;
+    deployment.pluginStatuses.mockResolvedValue([plugin]);
+    deployment.pluginEnable.mockImplementation(
+      async (_pluginId, reportActivity) =>
+        await new Promise<PluginOperationOutcome>((_resolve, reject) => {
+          reportActivity?.({ level: "working", message: "Preparing enable", stage: "operation" });
+          rejectEnable = reject;
+        })
+    );
+    deployment.snapshot
+      .mockResolvedValueOnce({ status: "ready", canReset: true, detail: "Everything is healthy." })
+      .mockImplementationOnce(
+        async () =>
+          await new Promise<DeploymentSnapshot>((resolve) => {
+            releaseSnapshot = () =>
+              resolve({ status: "degraded", canReset: true, detail: "Plugin cleanup needs inspection." });
+          })
+      );
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await openPluginManagement(terminal);
+    terminal.write("\r");
+    await terminal.waitFor("Preparing enable");
+    rejectEnable?.(new Error("Plugin rollback failed"));
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.input.emit("error", new Error("fixture terminal failure"));
+
+    await expect(menu).rejects.toThrow("Plugin rollback failed");
+    expect(terminal.setRawMode).toHaveBeenLastCalledWith(false);
+    releaseSnapshot?.();
+    await nextInputTurn();
+    expect(deployment.pluginStatuses).toHaveBeenCalledOnce();
+    expect(terminal.text).not.toContain("Plugin cleanup needs inspection.");
   });
 
   it("shows the selected split console and exits without changing anything", async () => {
@@ -2306,6 +2472,71 @@ describe("Atlas Core terminal UI", () => {
     await menu;
     expect(exited).toBe(true);
     expect(deployment.pluginUpdate).not.toHaveBeenCalled();
+  });
+
+  it("ignores Escape during Plugin planning and dispatches one cancellation across SIGINT and terminal loss", async () => {
+    const terminal = new TestTerminal();
+    const plugin = {
+      pluginId: "building_scan",
+      displayName: "Building Scan",
+      lifecycle: "query_only" as const,
+      enabled: false,
+      packaged: false,
+      installed: true,
+      selectedVersion: "1.0.0"
+    };
+    let finishPlanning: (() => void) | undefined;
+    const deployment = Object.assign(operator(), {
+      pluginUpdatePlan: vi.fn(
+        async () =>
+          await new Promise<PluginUpdatePlan>((resolve) => {
+            finishPlanning = () =>
+              resolve({
+                status: "current",
+                reason: "Building Scan 1.0.0 is current.",
+                pluginId: plugin.pluginId,
+                displayName: plugin.displayName,
+                currentVersion: "1.0.0",
+                enabled: false,
+                restartServices: [],
+                coreVersion: "0.2.1",
+                coreImage: "ghcr.io/the-drunken-coder/atlas-core@sha256:current-core"
+              });
+          })
+      ),
+      pluginUpdate: vi.fn(async () => ({ status: "success" as const }))
+    });
+    deployment.pluginStatuses.mockResolvedValue([plugin]);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+    let settled = false;
+    void menu.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      }
+    );
+
+    await openPluginManagement(terminal);
+    terminal.write("u");
+    await terminal.waitFor("Checking updates for Building Scan...");
+    terminal.write("\u001b");
+    await nextInputTurn();
+    expect(deployment.cancelPending).not.toHaveBeenCalled();
+    expect(terminal.text).toContain("Checking updates for Building Scan...");
+
+    process.emit("SIGINT", "SIGINT");
+    process.emit("SIGINT", "SIGINT");
+    terminal.input.emit("end");
+    await nextInputTurn();
+    expect(settled).toBe(false);
+    expect(deployment.cancelPending).toHaveBeenCalledOnce();
+
+    finishPlanning?.();
+    await expect(menu).rejects.toThrow("lost its terminal input");
+    expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce();
+    expect(terminal.setRawMode).toHaveBeenLastCalledWith(false);
   });
 
   it.each([
@@ -3736,7 +3967,115 @@ describe("Atlas Core terminal UI", () => {
     expect(deployment.cancelPending).toHaveBeenCalledOnce();
   });
 
-  it("cancels and exits when Ctrl-C is pressed during an update operation", async () => {
+  it("waits for a CLI update to settle and reports terminal loss after successful completion", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    deployment.checkForUpdates.mockResolvedValue({
+      cliVersion: "0.1.5",
+      coreVersion: "0.1.5",
+      latestVersion: "0.1.6",
+      cliUpdateAvailable: true,
+      coreUpdateAvailable: true
+    });
+    let finishUpdate: (() => void) | undefined;
+    deployment.updateWithProgress.mockImplementation(
+      async (_scope, _expectedVersion, report) =>
+        await new Promise<void>((resolve) => {
+          report?.({ message: "Installing CLI package", phase: "cli", stage: "operation" });
+          finishUpdate = resolve;
+        })
+    );
+    const update = createInteractiveCLI(terminal.input, terminal.output).runUpdate(deployment);
+    let settled = false;
+    void update.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      }
+    );
+
+    await terminal.waitFor("Update CLI only");
+    terminal.write("\r");
+    await terminal.waitFor("REVIEW UPDATE");
+    terminal.write("\r");
+    await terminal.waitFor("Installing CLI package");
+    terminal.input.emit("end");
+    await nextInputTurn();
+
+    expect(settled).toBe(false);
+    expect(deployment.cancelPending).toHaveBeenCalledOnce();
+    finishUpdate?.();
+    await expect(update).rejects.toThrow("lost its terminal input");
+    expect(terminal.text).not.toContain("CLI update cancelled");
+    expect(terminal.setRawMode).toHaveBeenLastCalledWith(false);
+  });
+
+  it("does not let the CLI-update success shortcut swallow terminal loss during completion rendering", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    deployment.checkForUpdates.mockResolvedValue({
+      cliVersion: "0.1.5",
+      coreVersion: "0.1.5",
+      latestVersion: "0.1.6",
+      cliUpdateAvailable: true,
+      coreUpdateAvailable: true
+    });
+    const loseTerminalAfterSuccess = (): void => {
+      if (!terminal.text.includes("Update complete")) return;
+      terminal.output.off("data", loseTerminalAfterSuccess);
+      terminal.input.emit("end");
+    };
+    terminal.output.on("data", loseTerminalAfterSuccess);
+    const update = createInteractiveCLI(terminal.input, terminal.output).runUpdate(deployment);
+
+    await terminal.waitFor("Update CLI only");
+    terminal.write("\r");
+    await terminal.waitFor("REVIEW UPDATE");
+    terminal.write("\r");
+
+    await expect(update).rejects.toThrow("lost its terminal input");
+    expect(terminal.text).toContain("Update complete");
+    expect(terminal.text).not.toContain("CLI update cancelled");
+    expect(terminal.setRawMode).toHaveBeenLastCalledWith(false);
+  });
+
+  it("reports an update failure instead of terminal loss after cleanup settles", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    deployment.checkForUpdates.mockResolvedValue({
+      cliVersion: "0.1.5",
+      coreVersion: "0.1.4",
+      latestVersion: "0.1.5",
+      cliUpdateAvailable: false,
+      coreUpdateAvailable: true
+    });
+    let failUpdate: (() => void) | undefined;
+    deployment.updateWithProgress.mockImplementation(
+      async (_scope, _expectedVersion, report) =>
+        await new Promise<void>((_resolve, reject) => {
+          report?.({ message: "Restarting Core", phase: "core", stage: "operation" });
+          failUpdate = () => reject(new Error("Core cleanup failed"));
+        })
+    );
+    const update = createInteractiveCLI(terminal.input, terminal.output).runUpdate(deployment);
+
+    await terminal.waitFor("Update Atlas Core");
+    terminal.write("\r");
+    await terminal.waitFor("REVIEW UPDATE");
+    terminal.write("\r");
+    await terminal.waitFor("Restarting Core");
+    terminal.input.emit("error", new Error("fixture input failure"));
+    expect(deployment.cancelPending).toHaveBeenCalledOnce();
+    failUpdate?.();
+
+    await expect(update).rejects.toThrow("Core cleanup failed");
+    expect(terminal.text).toContain("Core cleanup failed");
+    expect(terminal.setRawMode).toHaveBeenLastCalledWith(false);
+  });
+
+  it("keeps a completed CLI update successful when process SIGINT requests exit", async () => {
     const terminal = new TestTerminal();
     const deployment = operator();
     deployment.checkForUpdates.mockResolvedValue({
@@ -3772,7 +4111,8 @@ describe("Atlas Core terminal UI", () => {
     await update;
 
     expect(deployment.cancelPending).toHaveBeenCalledOnce();
-    expect(terminal.text).not.toContain("Update complete");
+    expect(terminal.text).toContain("Update complete");
+    expect(terminal.text).not.toContain("CLI update cancelled");
   });
 
   it("returns to the update menu after Escape cancels an update operation", async () => {
