@@ -651,6 +651,73 @@ describe("Atlas Core terminal UI", () => {
     await menu;
   });
 
+  it("keeps late reports from settled Plugin work out of a later activity", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    const buildingScan = {
+      pluginId: "building_scan",
+      displayName: "Building Scan",
+      lifecycle: "query_only" as const,
+      enabled: false,
+      packaged: true
+    };
+    const surveyTools = {
+      pluginId: "survey_tools",
+      displayName: "Survey Tools",
+      lifecycle: "query_only" as const,
+      enabled: false,
+      packaged: true
+    };
+    let finishBuildingScan: (() => void) | undefined;
+    let finishSurveyTools: (() => void) | undefined;
+    let reportBuildingScan: PluginActivityReporter | undefined;
+    deployment.pluginStatuses.mockResolvedValue([buildingScan, surveyTools]);
+    deployment.pluginEnable.mockImplementation(
+      async (pluginId, reportActivity) =>
+        await new Promise<PluginOperationOutcome>((resolve) => {
+          if (pluginId === buildingScan.pluginId) {
+            reportBuildingScan = reportActivity;
+            reportActivity?.({ level: "working", message: "Starting Building Scan", stage: "operation" });
+            finishBuildingScan = () => resolve({ status: "success" });
+          } else {
+            reportActivity?.({ level: "working", message: "Starting Survey Tools", stage: "operation" });
+            finishSurveyTools = () => resolve({ previousDeploymentPreserved: true, status: "cancelled" });
+          }
+        })
+    );
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await openPluginManagement(terminal);
+    terminal.write("\r");
+    await terminal.waitFor("Starting Building Scan");
+    finishBuildingScan?.();
+    await terminal.waitFor("Building Scan enabled.");
+    terminal.write("\r");
+    await vi.waitFor(() => expect(deployment.pluginStatuses).toHaveBeenCalledTimes(2));
+    await nextInputTurn();
+    terminal.write("\u001b[B");
+    await nextInputTurn();
+    terminal.write("\r");
+    await terminal.waitFor("Starting Survey Tools");
+    terminal.write("\u001b");
+    await terminal.waitFor("Cancelling safely. Waiting for cleanup...");
+
+    const outputBeforeLateReport = terminal.raw;
+    reportBuildingScan?.({ level: "failure", message: "Late Building Scan failure", stage: "rollback" });
+    await nextInputTurn();
+
+    expect(terminal.raw).toBe(outputBeforeLateReport);
+    expect(terminal.text).not.toContain("Late Building Scan failure");
+    expect(deployment.cancelPending).toHaveBeenCalledOnce();
+    finishSurveyTools?.();
+    await vi.waitFor(() => expect(deployment.pluginStatuses).toHaveBeenCalledTimes(3));
+    expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce();
+    terminal.write("q");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await menu;
+  });
+
   it.each([
     ["ready", "Running"],
     ["stopped", "Stopped"],
@@ -1732,6 +1799,65 @@ describe("Atlas Core terminal UI", () => {
     expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce();
   });
 
+  it.each([
+    { inputEvent: "end", outcome: "failure" },
+    { inputEvent: "error", outcome: "cancelled" },
+    { inputEvent: "error", outcome: "success" }
+  ] as const)("waits for lifecycle $outcome after terminal input $inputEvent", async ({ inputEvent, outcome }) => {
+    const terminal = new TestTerminal(80, true, 24);
+    const deployment = operator();
+    let finish: (() => void) | undefined;
+    deployment.runLifecycle.mockImplementationOnce(
+      async (_operation, report) =>
+        await new Promise<LifecycleOperationResult>((resolve) => {
+          report?.({ message: "Stopping services", stage: "operation" });
+          finish = () => {
+            if (outcome === "failure") {
+              resolve({ status: "failure", error: "Cleanup failed after terminal loss." });
+            } else if (outcome === "cancelled") {
+              resolve({
+                previousDeploymentPreserved: true,
+                status: "cancelled",
+                summary: "Stop Atlas Core cancelled."
+              });
+            } else {
+              resolve({ status: "success", summary: "Atlas Core stopped." });
+            }
+          };
+        })
+    );
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+    let settled = false;
+    void menu.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      }
+    );
+
+    await terminal.waitFor("Stop Atlas Core");
+    terminal.write("\u001b[B".repeat(2));
+    terminal.write("\r");
+    await terminal.waitFor("Stopping services");
+    if (inputEvent === "end") terminal.input.emit("end");
+    else terminal.input.emit("error", new Error("fixture terminal failure"));
+    await nextInputTurn();
+
+    expect(settled).toBe(false);
+    expect(deployment.cancelPending).toHaveBeenCalledOnce();
+    expect(deployment.snapshot).toHaveBeenCalledOnce();
+    expect(terminal.text).toContain("Terminal input lost. Waiting for safe cleanup.");
+
+    finish?.();
+    if (outcome === "failure") await expect(menu).rejects.toThrow("Cleanup failed after terminal loss.");
+    else await expect(menu).rejects.toThrow("lost its terminal input");
+    expect(deployment.snapshot).toHaveBeenCalledOnce();
+    expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce();
+    expect(terminal.setRawMode).toHaveBeenLastCalledWith(false);
+  });
+
   it("reports a Plugin rollback rejection instead of terminal loss after input ends", async () => {
     const terminal = new TestTerminal();
     const deployment = operator();
@@ -2422,37 +2548,7 @@ describe("Atlas Core terminal UI", () => {
 
   it("waits for Plugin update planning to cancel before exiting", async () => {
     const terminal = new TestTerminal();
-    const plugin = {
-      pluginId: "building_scan",
-      displayName: "Building Scan",
-      lifecycle: "query_only" as const,
-      enabled: false,
-      packaged: false,
-      installed: true,
-      selectedVersion: "1.0.0"
-    };
-    let finishPlanning: (() => void) | undefined;
-    const deployment = Object.assign(operator(), {
-      pluginUpdatePlan: vi.fn(
-        async () =>
-          await new Promise<PluginUpdatePlan>((resolve) => {
-            finishPlanning = () =>
-              resolve({
-                status: "current",
-                reason: "Building Scan 1.0.0 is current.",
-                pluginId: plugin.pluginId,
-                displayName: plugin.displayName,
-                currentVersion: "1.0.0",
-                enabled: false,
-                restartServices: [],
-                coreVersion: "0.2.1",
-                coreImage: "ghcr.io/the-drunken-coder/atlas-core@sha256:current-core"
-              });
-          })
-      ),
-      pluginUpdate: vi.fn(async () => ({ status: "success" as const }))
-    });
-    deployment.pluginStatuses.mockResolvedValue([plugin]);
+    const { deployment, finishPlanning } = deferredPluginUpdatePlanning();
     let exited = false;
     const menu = createInteractiveCLI(terminal.input, terminal.output)
       .runMenu(deployment)
@@ -2468,45 +2564,66 @@ describe("Atlas Core terminal UI", () => {
     await vi.waitFor(() => expect(deployment.cancelPending).toHaveBeenCalledOnce());
     expect(exited).toBe(false);
 
-    finishPlanning?.();
+    finishPlanning();
     await menu;
     expect(exited).toBe(true);
     expect(deployment.pluginUpdate).not.toHaveBeenCalled();
   });
 
+  it("waits for Plugin update planning to settle after process SIGINT", async () => {
+    const terminal = new TestTerminal();
+    const { deployment, finishPlanning } = deferredPluginUpdatePlanning();
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+    let settled = false;
+    void menu.finally(() => {
+      settled = true;
+    });
+
+    await openPluginManagement(terminal);
+    terminal.write("u");
+    await terminal.waitFor("Checking updates for Building Scan...");
+    process.emit("SIGINT", "SIGINT");
+    await nextInputTurn();
+
+    expect(settled).toBe(false);
+    expect(deployment.cancelPending).toHaveBeenCalledOnce();
+    finishPlanning();
+    await expect(menu).resolves.toBeUndefined();
+    expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce();
+    expect(terminal.setRawMode).toHaveBeenLastCalledWith(false);
+  });
+
+  it("waits for Plugin update planning to settle after terminal input ends", async () => {
+    const terminal = new TestTerminal();
+    const { deployment, finishPlanning } = deferredPluginUpdatePlanning();
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+    let settled = false;
+    void menu.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      }
+    );
+
+    await openPluginManagement(terminal);
+    terminal.write("u");
+    await terminal.waitFor("Checking updates for Building Scan...");
+    terminal.input.emit("end");
+    await nextInputTurn();
+
+    expect(settled).toBe(false);
+    expect(deployment.cancelPending).toHaveBeenCalledOnce();
+    finishPlanning();
+    await expect(menu).rejects.toThrow("lost its terminal input");
+    expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce();
+    expect(terminal.setRawMode).toHaveBeenLastCalledWith(false);
+  });
+
   it("ignores Escape during Plugin planning and dispatches one cancellation across SIGINT and terminal loss", async () => {
     const terminal = new TestTerminal();
-    const plugin = {
-      pluginId: "building_scan",
-      displayName: "Building Scan",
-      lifecycle: "query_only" as const,
-      enabled: false,
-      packaged: false,
-      installed: true,
-      selectedVersion: "1.0.0"
-    };
-    let finishPlanning: (() => void) | undefined;
-    const deployment = Object.assign(operator(), {
-      pluginUpdatePlan: vi.fn(
-        async () =>
-          await new Promise<PluginUpdatePlan>((resolve) => {
-            finishPlanning = () =>
-              resolve({
-                status: "current",
-                reason: "Building Scan 1.0.0 is current.",
-                pluginId: plugin.pluginId,
-                displayName: plugin.displayName,
-                currentVersion: "1.0.0",
-                enabled: false,
-                restartServices: [],
-                coreVersion: "0.2.1",
-                coreImage: "ghcr.io/the-drunken-coder/atlas-core@sha256:current-core"
-              });
-          })
-      ),
-      pluginUpdate: vi.fn(async () => ({ status: "success" as const }))
-    });
-    deployment.pluginStatuses.mockResolvedValue([plugin]);
+    const { deployment, finishPlanning } = deferredPluginUpdatePlanning();
     const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
     let settled = false;
     void menu.then(
@@ -2533,7 +2650,7 @@ describe("Atlas Core terminal UI", () => {
     expect(settled).toBe(false);
     expect(deployment.cancelPending).toHaveBeenCalledOnce();
 
-    finishPlanning?.();
+    finishPlanning();
     await expect(menu).rejects.toThrow("lost its terminal input");
     expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce();
     expect(terminal.setRawMode).toHaveBeenLastCalledWith(false);
@@ -4297,6 +4414,44 @@ describe("Atlas Core terminal UI", () => {
     expect(deployment.cancelPending).toHaveBeenCalledOnce();
   });
 });
+
+function deferredPluginUpdatePlanning() {
+  const plugin = {
+    pluginId: "building_scan",
+    displayName: "Building Scan",
+    lifecycle: "query_only" as const,
+    enabled: false,
+    packaged: false,
+    installed: true,
+    selectedVersion: "1.0.0"
+  };
+  const plan: PluginUpdatePlan = {
+    status: "current",
+    reason: "Building Scan 1.0.0 is current.",
+    pluginId: plugin.pluginId,
+    displayName: plugin.displayName,
+    currentVersion: "1.0.0",
+    enabled: false,
+    restartServices: [],
+    coreVersion: "0.2.1",
+    coreImage: "ghcr.io/the-drunken-coder/atlas-core@sha256:current-core"
+  };
+  let resolvePlanning: ((plan: PluginUpdatePlan) => void) | undefined;
+  const deployment = Object.assign(operator(), {
+    pluginUpdatePlan: vi.fn(
+      async () =>
+        await new Promise<PluginUpdatePlan>((resolve) => {
+          resolvePlanning = resolve;
+        })
+    ),
+    pluginUpdate: vi.fn(async () => ({ status: "success" as const }))
+  });
+  deployment.pluginStatuses.mockResolvedValue([plugin]);
+  return {
+    deployment,
+    finishPlanning: () => resolvePlanning?.(plan)
+  };
+}
 
 function stripAnsi(value: string): string {
   return value.replace(/\u001b(?:\][^\u0007]*(?:\u0007|\u001b\\)|\[[0-?]*[ -/]*[@-~]|[@-_])/gu, "");

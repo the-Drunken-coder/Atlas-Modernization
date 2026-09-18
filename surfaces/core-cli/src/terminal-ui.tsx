@@ -70,7 +70,6 @@ type TrackedOperation = {
 type OperationInterruption = {
   cancellationRequested: boolean;
   intent?: "return" | "exit";
-  kind: TrackedOperationKind;
 };
 
 type OperationCoordination = {
@@ -441,7 +440,7 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
     [coordination, exit, loadMenu, mode, operator, waitUntilRenderFlush]
   );
 
-  const cancelLifecycleOperation = useCallback(
+  const cancelActiveOperation = useCallback(
     (disposition: "return" | "exit") => {
       interruptActiveOperation(disposition, "Cancellation requested. Waiting for safe cleanup.");
     },
@@ -555,13 +554,6 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
       });
     },
     [operator, runPluginActivity]
-  );
-
-  const cancelPluginActivity = useCallback(
-    (disposition: "return" | "exit") => {
-      interruptActiveOperation(disposition, "Cancellation requested. Waiting for safe cleanup.");
-    },
-    [interruptActiveOperation]
   );
 
   const openPluginLogViewer = useCallback(
@@ -783,13 +775,6 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
     [coordination, exit, loadMenu, loadUpdate, mode, operator, waitUntilRenderFlush]
   );
 
-  const cancelUpdateOperation = useCallback(
-    (disposition: "return" | "exit") => {
-      interruptActiveOperation(disposition, "Cancellation requested. Waiting for safe cleanup.");
-    },
-    [interruptActiveOperation]
-  );
-
   if (screen.kind === "busy") {
     return (
       <BusyScreen
@@ -832,7 +817,7 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
             ? setScreen({ kind: "password", ...(screen.view.error ? { error: screen.view.error } : {}) })
             : void loadMenu()
         }
-        onCancel={cancelLifecycleOperation}
+        onCancel={cancelActiveOperation}
         view={screen.view}
       />
     );
@@ -848,7 +833,7 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
             exit(screen.view.error ? new Error(screen.view.error) : undefined);
           } else void loadMenu();
         }}
-        onCancel={cancelUpdateOperation}
+        onCancel={cancelActiveOperation}
         returnToMenu={mode !== "update" && !updateInvolvesCLI(screen.view.info, screen.view.scope)}
         view={screen.view}
       />
@@ -959,7 +944,7 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
   }
   if (screen.kind === "plugin-activity") {
     return (
-      <PluginActivityScreen onBack={() => void loadPlugins()} onCancel={cancelPluginActivity} view={screen.view} />
+      <PluginActivityScreen onBack={() => void loadPlugins()} onCancel={cancelActiveOperation} view={screen.view} />
     );
   }
   if (screen.kind === "status") {
@@ -3044,7 +3029,6 @@ function createOperationCoordination(cancelPending: () => void): OperationCoordi
       if (failure) knownFailure = failure;
       const interruption: OperationInterruption = {
         cancellationRequested: active.cancellationRequested,
-        kind: active.kind,
         ...(active.intent ? { intent: active.intent } : {})
       };
       active = undefined;
