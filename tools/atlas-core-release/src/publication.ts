@@ -712,7 +712,11 @@ export async function promoteExactImage(
   if (existing && existing !== expectedDigest)
     throw new Error(`${target} already resolves to conflicting digest ${existing}`);
   if (existing === expectedDigest) return;
-  const result = runner.run("docker", ["buildx", "imagetools", "create", "--tag", target, source], timings.deadlineMs);
+  const result = runner.run(
+    "docker",
+    ["buildx", "imagetools", "create", "--prefer-index=false", "--tag", target, source],
+    timings.deadlineMs
+  );
   if (result.status !== 0) throw new AmbiguousWriteError(commandError("promote image", result).message);
   const actual = await waitForValue(
     () => inspectImage(runner, target),

@@ -408,6 +408,7 @@ class ControlledPublicationRunner implements CommandRunner {
       return this.image ? success(JSON.stringify({ digest: this.image })) : failure("manifest unknown");
     }
     if (args[0] === "buildx" && args[1] === "imagetools" && args[2] === "create") {
+      if (!args.includes("--prefer-index=false")) return failure("image promotion did not request a carbon copy");
       return this.#write("image", () => {
         this.image = imageDigest;
       });
