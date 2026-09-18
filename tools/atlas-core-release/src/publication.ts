@@ -42,6 +42,10 @@ export interface PublicationTimings {
 
 export type AttestationFetcher = (url: string) => Promise<unknown>;
 
+export const MAX_NPM_ATTESTATION_BYTES = 5 * 1024 * 1024;
+
+class PermanentPublicationReadError extends Error {}
+
 export class ProcessCommandRunner implements CommandRunner {
   run(file: string, args: readonly string[], timeoutMs = COMMAND_TIMEOUT_MS): CommandResult {
     const result = spawnSync(file, args, {
@@ -64,7 +68,7 @@ export async function reconcileLivePublication(
   bundleRoot: string,
   runner: CommandRunner = new ProcessCommandRunner(),
   timings: PublicationTimings = { deadlineMs: DEFAULT_DEADLINE_MS, retryMs: DEFAULT_RETRY_MS },
-  fetchAttestation: AttestationFetcher = fetchJSON
+  fetchAttestation: AttestationFetcher = fetchNpmAttestation
 ): Promise<PublicationPlan> {
   validateManifest(manifest, bundleRoot);
   validateChecksums(manifest, bundleRoot);
@@ -79,7 +83,7 @@ export async function inspectLivePublication(
   bundleRoot: string,
   runner: CommandRunner = new ProcessCommandRunner(),
   timings: PublicationTimings = { deadlineMs: DEFAULT_DEADLINE_MS, retryMs: DEFAULT_RETRY_MS },
-  fetchAttestation: AttestationFetcher = fetchJSON
+  fetchAttestation: AttestationFetcher = fetchNpmAttestation
 ): Promise<PublicationPlan> {
   validateManifest(manifest, bundleRoot);
   validateChecksums(manifest, bundleRoot);
@@ -92,7 +96,7 @@ export async function verifyCompletedLivePublication(
   bundleRoot: string,
   runner: CommandRunner = new ProcessCommandRunner(),
   timings: PublicationTimings = { deadlineMs: DEFAULT_DEADLINE_MS, retryMs: DEFAULT_RETRY_MS },
-  fetchAttestation: AttestationFetcher = fetchJSON
+  fetchAttestation: AttestationFetcher = fetchNpmAttestation
 ): Promise<PublicationPlan> {
   validateManifest(manifest, bundleRoot);
   validateChecksums(manifest, bundleRoot);
@@ -119,7 +123,7 @@ export class LivePublicationAdapters implements PublicationAdapters {
     runner: CommandRunner = new ProcessCommandRunner(),
     timings: PublicationTimings = { deadlineMs: DEFAULT_DEADLINE_MS, retryMs: DEFAULT_RETRY_MS },
     verifyObservedNpm = true,
-    fetchAttestation: AttestationFetcher = fetchJSON
+    fetchAttestation: AttestationFetcher = fetchNpmAttestation
   ) {
     this.#manifest = manifest;
     this.#bundleRoot = bundleRoot;
@@ -692,11 +696,42 @@ export function validateNpmAttestationUrl(value: string, version: string): URL {
   return url;
 }
 
-async function fetchJSON(url: string): Promise<unknown> {
-  const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+export async function fetchNpmAttestation(url: string, fetcher: typeof fetch = fetch): Promise<unknown> {
+  const response = await fetcher(url, { redirect: "manual", signal: AbortSignal.timeout(30_000) });
+  if (response.status >= 300 && response.status < 400) {
+    throw new PermanentPublicationReadError("npm provenance refused an HTTP redirect");
+  }
+  if (response.redirected || (response.url !== "" && response.url !== url)) {
+    throw new PermanentPublicationReadError("npm provenance resolved to an unexpected URL");
+  }
   if (!response.ok) throw new Error(`npm provenance returned HTTP ${response.status}`);
-  const value: unknown = await response.json();
-  return value;
+  const declaredLength = response.headers.get("content-length");
+  if (declaredLength !== null) {
+    const bytes = Number(declaredLength);
+    if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > MAX_NPM_ATTESTATION_BYTES) {
+      throw new PermanentPublicationReadError("npm provenance response exceeds the size limit");
+    }
+  }
+  const reader = response.body?.getReader();
+  if (!reader) throw new PermanentPublicationReadError("npm provenance returned an empty response");
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  for (;;) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    totalBytes += chunk.value.byteLength;
+    if (totalBytes > MAX_NPM_ATTESTATION_BYTES) {
+      await reader.cancel().catch(() => undefined);
+      throw new PermanentPublicationReadError("npm provenance response exceeds the size limit");
+    }
+    chunks.push(chunk.value);
+  }
+  try {
+    const value: unknown = JSON.parse(Buffer.concat(chunks, totalBytes).toString("utf8"));
+    return value;
+  } catch {
+    throw new PermanentPublicationReadError("npm provenance returned invalid JSON");
+  }
 }
 
 export async function promoteExactImage(
@@ -783,6 +818,7 @@ async function waitForValue<T>(
       if (conflicts(lastValue)) throw new Error(`${label} returned conflicting state`);
       if (accepted(lastValue)) return lastValue;
     } catch (error) {
+      if (error instanceof PermanentPublicationReadError) throw error;
       if (error instanceof Error && error.message === `${label} returned conflicting state`) throw error;
       lastError = error;
     }

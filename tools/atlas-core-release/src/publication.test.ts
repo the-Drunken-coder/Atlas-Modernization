@@ -8,8 +8,10 @@ import test from "node:test";
 import {
   type CommandResult,
   type CommandRunner,
+  fetchNpmAttestation,
   inspectImage,
   inspectLivePublication as inspectLivePublicationImpl,
+  MAX_NPM_ATTESTATION_BYTES,
   reconcileLivePublication as reconcileLivePublicationImpl,
   validateNpmAttestationUrl,
   verifyCompletedLivePublication as verifyCompletedLivePublicationImpl
@@ -68,6 +70,64 @@ test("npm provenance downloads are restricted to the exact registry endpoint", (
     "https://registry.npmjs.org/-/npm/v1/attestations/atlas-core@1.2.3?redirect=https://example.invalid"
   ]) {
     assert.throws(() => validateNpmAttestationUrl(value, "1.2.3"), /unexpected origin or path/);
+  }
+});
+
+test("npm provenance fetch rejects redirects and oversized responses without retrying", async () => {
+  const fixture = publicationFixture();
+  const runner = new ControlledPublicationRunner(fixture.manifest, fixture.root, "github-create", "after");
+  let fetches = 0;
+  try {
+    runner.clearFailure();
+    await assert.rejects(
+      reconcileLivePublicationImpl(
+        fixture.manifest,
+        fixture.root,
+        runner,
+        { deadlineMs: 1_000, retryMs: 0 },
+        async (url) => {
+          fetches += 1;
+          return await fetchNpmAttestation(url, async (_input, init) => {
+            assert.equal(init?.redirect, "manual");
+            return new Response(null, {
+              status: 302,
+              headers: { location: "https://example.invalid/provenance" }
+            });
+          });
+        }
+      ),
+      /refused an HTTP redirect/
+    );
+    assert.equal(fetches, 1);
+
+    await assert.rejects(
+      fetchNpmAttestation(
+        "https://registry.npmjs.org/-/npm/v1/attestations/atlas-core@1.2.3",
+        async () =>
+          new Response("{}", {
+            headers: { "content-length": String(MAX_NPM_ATTESTATION_BYTES + 1) }
+          })
+      ),
+      /exceeds the size limit/
+    );
+
+    await assert.rejects(
+      fetchNpmAttestation(
+        "https://registry.npmjs.org/-/npm/v1/attestations/atlas-core@1.2.3",
+        async () =>
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(new Uint8Array(MAX_NPM_ATTESTATION_BYTES + 1));
+                controller.close();
+              }
+            })
+          )
+      ),
+      /exceeds the size limit/
+    );
+  } finally {
+    fixture.remove();
   }
 });
 
