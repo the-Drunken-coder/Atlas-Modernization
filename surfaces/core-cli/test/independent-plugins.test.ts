@@ -23,6 +23,7 @@ import {
   type TransactionFactory,
   type TransactionPhase
 } from "../src/independent-plugins.js";
+import { CommandCancelledError, PluginOperationFailure } from "../src/operation-errors.js";
 
 const image = "ghcr.io/the-drunken-coder/atlas-building-scan@sha256:" + "a".repeat(64);
 const manifest = "sha256:" + "b".repeat(64);
@@ -44,9 +45,12 @@ class FakeTransaction {
   committed = false;
   cleaned = false;
   failNextCleanup = false;
+  failCleanup = false;
+  failRead = false;
   recovery: { priorPluginHealthy?: boolean } | undefined;
   options!: Parameters<TransactionFactory>[0];
   read() {
+    if (this.failRead) throw new Error("injected unreadable transaction");
     return {
       ...this.options,
       phase: this.phases.at(-1) ?? "prepared",
@@ -87,12 +91,22 @@ class FakeTransaction {
   }
 
   cleanup(): void {
-    if (this.failNextCleanup) {
+    if (this.failCleanup || this.failNextCleanup) {
       this.failNextCleanup = false;
       throw new Error("injected cleanup failure");
     }
     this.cleaned = true;
   }
+}
+
+async function readPluginFailure(operation: Promise<unknown>): Promise<PluginOperationFailure> {
+  try {
+    await operation;
+  } catch (error) {
+    expect(error).toBeInstanceOf(PluginOperationFailure);
+    return error as PluginOperationFailure;
+  }
+  throw new Error("Expected Plugin operation to fail.");
 }
 
 class FakeHost {
@@ -449,6 +463,25 @@ describe("IndependentPluginManager", () => {
     expect(transaction.cleaned).toBe(true);
   });
 
+  it("reports a committed update when both cleanup attempts fail", async () => {
+    const { manager, transaction } = setup();
+    await manager.install(release("0.1.0"));
+    transaction.failCleanup = true;
+
+    const failure = await readPluginFailure(manager.update("building_scan", release("0.2.0")));
+
+    expect(failure).toMatchObject({
+      outcome: "committed-cleanup-incomplete",
+      cancelled: false,
+      operationError: { message: "injected cleanup failure" },
+      recoveryError: undefined,
+      cleanupErrors: [{ message: "injected cleanup failure" }]
+    });
+    expect(manager.readInstalled("building_scan").selected.version).toBe("0.2.0");
+    expect(transaction.phases.at(-1)).toBe("committed");
+    expect(transaction.cleaned).toBe(false);
+  });
+
   it("restores selected release and enabled state when runtime verification fails", async () => {
     const { host, manager, transaction } = setup();
     await manager.install(release("0.1.0"));
@@ -456,7 +489,13 @@ describe("IndependentPluginManager", () => {
     host.running = true;
     host.failRuntime = true;
 
-    await expect(manager.update("building_scan", release("0.2.0"))).rejects.toThrow("plugin health failed");
+    const failure = await readPluginFailure(manager.update("building_scan", release("0.2.0")));
+    expect(failure).toMatchObject({
+      outcome: "restored",
+      cancelled: false,
+      operationError: { message: "plugin health failed" },
+      recoveryError: undefined
+    });
     expect(manager.readInstalled("building_scan").selected.version).toBe("0.1.0");
     expect(manager.readInstalled("building_scan").previous).toBeNull();
     expect([...host.enabled]).toEqual(["building_scan"]);
@@ -514,6 +553,93 @@ describe("IndependentPluginManager", () => {
       version: "0.2.0"
     });
     expect(manager.readInstalled("building_scan").selected.version).toBe("0.2.0");
+  });
+
+  it("retains the action and recovery errors when runtime restoration fails", async () => {
+    const { host, manager, transaction } = setup();
+    await manager.install(release("0.1.0"));
+    await manager.enable("building_scan");
+    host.running = true;
+    let selectedChecks = 0;
+    host.host.verifyRuntime = (selected) => {
+      if (selected.version === "0.2.0") throw new Error("candidate runtime failed");
+      selectedChecks += 1;
+      if (selectedChecks > 1) throw new Error("restored runtime failed");
+    };
+
+    const failure = await readPluginFailure(manager.update("building_scan", release("0.2.0")));
+
+    expect(failure).toMatchObject({
+      outcome: "recovery-incomplete",
+      cancelled: false,
+      operationError: { message: "candidate runtime failed" },
+      recoveryError: { message: "restored runtime failed" }
+    });
+    expect(failure.message).toBe("candidate runtime failed");
+    expect(manager.readInstalled("building_scan").selected.version).toBe("0.1.0");
+    expect(transaction.phases.at(-1)).toBe("rollback-complete");
+    expect(transaction.cleaned).toBe(false);
+
+    host.host.verifyRuntime = () => undefined;
+    await expect(manager.recover(transaction as unknown as DeploymentTransaction)).resolves.toBeUndefined();
+    expect(transaction.cleaned).toBe(true);
+  });
+
+  it("does not let cancellation hide failed runtime recovery", async () => {
+    const { host, manager, transaction } = setup();
+    await manager.install(release("0.1.0"));
+    await manager.enable("building_scan");
+    host.running = true;
+    let selectedChecks = 0;
+    host.host.verifyRuntime = (selected) => {
+      if (selected.version === "0.2.0") throw new CommandCancelledError();
+      selectedChecks += 1;
+      if (selectedChecks > 1) throw new Error("restored runtime failed after cancellation");
+    };
+
+    const failure = await readPluginFailure(manager.update("building_scan", release("0.2.0")));
+
+    expect(failure).toMatchObject({
+      outcome: "recovery-incomplete",
+      cancelled: true,
+      operationError: { name: "CommandCancelledError" },
+      recoveryError: { message: "restored runtime failed after cancellation" }
+    });
+    expect(transaction.phases.at(-1)).toBe("rollback-complete");
+    expect(transaction.cleaned).toBe(false);
+  });
+
+  it("reports an unknown outcome when transaction evidence cannot be read", async () => {
+    const { host, manager, transaction } = setup();
+    await manager.install(release("0.1.0"));
+    host.host.verifyRetainedBundle = () => {
+      transaction.failRead = true;
+      throw new Error("enable action failed");
+    };
+
+    const failure = await readPluginFailure(manager.enable("building_scan"));
+
+    expect(failure).toMatchObject({
+      outcome: "unknown",
+      operationError: { message: "enable action failed" },
+      recoveryError: { message: "injected unreadable transaction" }
+    });
+    expect(transaction.cleaned).toBe(false);
+  });
+
+  it("honors stopped intent while restoring a failed running update", async () => {
+    const { host, manager } = setup();
+    await manager.install(release("0.1.0"));
+    await manager.enable("building_scan");
+    host.running = true;
+    host.host.readDesiredRunning = () => false;
+    host.failRuntimeForVersion = "0.2.0";
+
+    const failure = await readPluginFailure(manager.update("building_scan", release("0.2.0")));
+
+    expect(failure.outcome).toBe("restored");
+    expect(host.compose.at(-1)).toEqual(["down", "--remove-orphans"]);
+    expect(manager.readInstalled("building_scan").selected.version).toBe("0.1.0");
   });
 
   it("keeps health verification strict when the prior Plugin was healthy", async () => {

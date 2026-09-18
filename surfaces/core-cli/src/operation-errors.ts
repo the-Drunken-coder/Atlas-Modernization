@@ -11,3 +11,49 @@ export class OperationCleanupError extends Error {
     this.name = "OperationCleanupError";
   }
 }
+
+export type PluginFailureOutcome =
+  | "rejected"
+  | "restored"
+  | "recovery-incomplete"
+  | "committed-cleanup-incomplete"
+  | "unknown";
+
+export type PluginOperationFailureOptions = {
+  outcome: PluginFailureOutcome;
+  operationError: unknown;
+  recoveryError?: unknown;
+  cleanupErrors?: readonly unknown[];
+  pluginId?: string;
+  updatedPluginIds?: readonly string[];
+  cancelled?: boolean;
+};
+
+/** A failed Plugin request with the outcome facts established by its transaction owner. */
+export class PluginOperationFailure extends Error {
+  readonly outcome: PluginFailureOutcome;
+  readonly operationError: Error;
+  readonly recoveryError: Error | undefined;
+  readonly cleanupErrors: readonly Error[];
+  readonly pluginId: string | undefined;
+  readonly updatedPluginIds: readonly string[];
+  readonly cancelled: boolean;
+
+  constructor(options: PluginOperationFailureOptions) {
+    const operationError = asError(options.operationError);
+    const recoveryError = options.recoveryError === undefined ? undefined : asError(options.recoveryError);
+    super(operationError.message, { cause: operationError });
+    this.name = "PluginOperationFailure";
+    this.outcome = options.outcome;
+    this.operationError = operationError;
+    this.recoveryError = recoveryError;
+    this.cleanupErrors = (options.cleanupErrors ?? []).map(asError);
+    this.pluginId = options.pluginId;
+    this.updatedPluginIds = [...(options.updatedPluginIds ?? [])];
+    this.cancelled = options.cancelled ?? false;
+  }
+}
+
+function asError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
+}
