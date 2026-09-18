@@ -9,6 +9,7 @@
     "packages/plugin-runtime",
     "packages/meshtastic-link",
     "surfaces/core-cli",
+    "tools/atlas-core-release",
     "plugins/*",
     "surfaces/command-interface",
     "simulations"
@@ -29,6 +30,8 @@
     "plugins:release:document": "node scripts/plugin-release.mjs release-document",
     "plugins:release:candidate": "node scripts/plugin-release.mjs check-candidate",
     "plugins:release:test": "node --test scripts/plugin-release.test.mjs scripts/plugin-release-catalog.test.mjs",
+    "atlas-core:release:build": "npm run build --workspace @atlas/atlas-core-release",
+    "atlas-core:release:check": "npm run check --workspace @atlas/atlas-core-release",
     "build:meshtastic-link": "npm run build --workspace @the-drunken-coder/atlas-meshtastic-link",
     "build:core-cli": "npm run build --workspace atlas-core",
     "meshtastic-link": "npm run link --workspace @the-drunken-coder/atlas-meshtastic-link --",

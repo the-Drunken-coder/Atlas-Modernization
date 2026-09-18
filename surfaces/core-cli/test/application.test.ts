@@ -75,7 +75,7 @@ function fakeImageIdentity(image: string): { platformDigest: string; localId: st
 }
 
 function nextPatchVersion(version: string): string {
-  const [major, minor, patch, ...extra] = version.split(".");
+  const [major, minor, patch, ...extra] = version.replace(/-dev$/u, "").split(".");
   if (!major || !minor || !patch || extra.length > 0) throw new Error(`Invalid test package version: ${version}`);
   return `${major}.${minor}.${Number(patch) + 1}`;
 }

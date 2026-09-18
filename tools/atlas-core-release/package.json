@@ -1,0 +1,16 @@
+{
+  "name": "@atlas/atlas-core-release",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "npm run build && node --test dist/*.test.js"
+  },
+  "devDependencies": {
+    "@types/node": "^26.5.0",
+    "typescript": "^7.0.2"
+  }
+}

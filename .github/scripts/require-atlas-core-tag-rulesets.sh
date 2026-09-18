@@ -28,5 +28,6 @@ temp_dir="$(mktemp -d)"
 trap 'rm -rf "$temp_dir"' EXIT
 gh api "repos/$GITHUB_REPOSITORY/rulesets/$creation_id" > "$temp_dir/creation.json"
 gh api "repos/$GITHUB_REPOSITORY/rulesets/$immutability_id" > "$temp_dir/immutability.json"
-node "$script_dir/atlas-core-release.mjs" \
-  validate-tag-rulesets "$temp_dir/creation.json" "$temp_dir/immutability.json"
+node "$script_dir/../../tools/atlas-core-release/dist/cli.js" validate-tag-rulesets \
+  --creation "$temp_dir/creation.json" \
+  --immutability "$temp_dir/immutability.json"

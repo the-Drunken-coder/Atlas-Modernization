@@ -40,6 +40,12 @@ jobs:
           go-version-file: ${{ env.GO_VERSION_FILE }}
           cache-dependency-path: ${{ env.GO_SUM_FILE }}
 
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+
       - name: Run actionlint over all workflows
         # actionlint v1.7.11 predates GitHub's concurrency.queue syntax.
         run: >-
@@ -50,7 +56,11 @@ jobs:
         run: |
           bash -n .github/scripts/test-atlas-core-package.sh
           bash -n .github/scripts/require-atlas-core-tag-rulesets.sh
-          bash -n .github/scripts/verify-atlas-core-release-tag.sh
+
+      - name: Check Atlas Core release module
+        run: |
+          npm ci --workspace @atlas/atlas-core-release --ignore-scripts
+          npm run check --workspace @atlas/atlas-core-release
 
   go-quality:
     name: go-quality
@@ -257,9 +267,6 @@ jobs:
       - name: Check Atlas Core npm package
         run: npm run check --workspace atlas-core
 
-      - name: Test Atlas Core release validation
-        run: node --test .github/scripts/atlas-core-release.test.mjs
-
       - name: Validate packaged Docker Compose topology
         shell: bash
         run: |
@@ -319,7 +326,7 @@ jobs:
             (.volumes | keys) == ["minio_data"] and
             .volumes.minio_data.external == true and
             .volumes.minio_data.name == $volume
-          ' <<< "$init_config_json"
+              ' <<< "$init_config_json"
 
       - name: Build the current Core candidate in an isolated registry
         id: candidate
@@ -365,6 +372,20 @@ jobs:
           digest="$(docker image inspect "$image_tag" --format '{{json .RepoDigests}}' | jq -er '.[] | select(startswith("localhost:5000/atlas-core@")) | split("@")[1] | select(test("^sha256:[0-9a-f]{64}$"))')"
           echo "image_reference=localhost:5000/atlas-core@$digest" >> "$GITHUB_OUTPUT"
 
+      - name: Exercise release image reconciliation against the isolated registry
+        env:
+          IMAGE_REFERENCE: ${{ steps.candidate.outputs.image_reference }}
+        run: |
+          set -euo pipefail
+          npm run build --workspace @atlas/atlas-core-release
+          digest="${IMAGE_REFERENCE##*@}"
+          target="localhost:5000/atlas-core:release-adapter-${{ matrix.architecture }}"
+          node tools/atlas-core-release/dist/cli.js promote-image \
+            --source "$IMAGE_REFERENCE" \
+            --target "$target" \
+            --digest "$digest"
+          test "$(node tools/atlas-core-release/dist/cli.js inspect-image --reference "$target")" = "$digest"
+
       - name: Exercise the current Core package initialization against Docker
         shell: bash
         env:
@@ -382,12 +403,8 @@ jobs:
           const packageJSON = JSON.parse(readFileSync(packagePath, "utf8"));
           packageJSON.atlasCoreImage = image;
           writeFileSync(packagePath, `${JSON.stringify(packageJSON, null, 2)}\n`);
-          const metadataPath = "surfaces/core-cli/dist/package-metadata.js";
-          const metadata = readFileSync(metadataPath, "utf8");
-          const updated = metadata.replace(/ghcr\.io\/the-drunken-coder\/atlas-core@sha256:[0-9a-f]{64}/u, image);
-          if (updated === metadata) throw new Error("Built Core package metadata did not contain its image pin.");
-          writeFileSync(metadataPath, updated);
           NODE
+          ATLAS_CORE_PACKAGE_IMAGE="$IMAGE_REFERENCE" npm run build --workspace atlas-core
           package_dir="$RUNNER_TEMP/atlas-core-ci-package"
           mkdir -p "$package_dir"
           pack_json="$(npm pack --workspace atlas-core --ignore-scripts --pack-destination "$package_dir" --json --silent)"
