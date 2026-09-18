@@ -16,6 +16,10 @@ const publisher = jobBlock(publication, "publish");
 const completedVerifier = jobBlock(publication, "verify-completed");
 const reservation = jobBlock(request, "reserve-tag");
 const requestValidation = jobBlock(request, "validate");
+const trustedCheckout = stepBlock(reservation, "Checkout trusted release control");
+const inspectionCredential = stepBlock(reservation, "Mint read-only release inspection credential");
+const tagCredential = stepBlock(reservation, "Mint tag-only release credential");
+const createTag = stepBlock(reservation, "Create or verify annotated release tag");
 
 test("publication is tag-triggered, manually recoverable, and defaults to no permissions", () => {
   assert.match(publication, /push:\n\s+tags:\n\s+- atlas-core-v\*/u);
@@ -41,13 +45,36 @@ test("publication runs the typed reconciler and requires an immutable release se
 
 test("the request workflow isolates the release App in the tag job", () => {
   assert.match(reservation, /name: release-commit/u);
-  assert.equal(request.match(/create-github-app-token/gu)?.length, 1);
+  assert.equal(request.match(/create-github-app-token/gu)?.length, 2);
   assert.match(reservation, /client-id: \$\{\{ vars\.ATLAS_CORE_RELEASE_APP_CLIENT_ID \}\}/u);
-  assert.match(reservation, /permission-administration: read/u);
+  assert.match(inspectionCredential, /permission-administration: read/u);
+  assert.match(inspectionCredential, /permission-contents: read/u);
+  assert.doesNotMatch(inspectionCredential, /permission-contents: write/u);
+  assert.match(tagCredential, /permission-contents: write/u);
+  assert.doesNotMatch(tagCredential, /permission-administration/u);
+  assert.match(trustedCheckout, /ref: \$\{\{ github\.sha \}\}/u);
+  assert.match(trustedCheckout, /persist-credentials: false/u);
   assert.match(reservation, /require-atlas-core-tag-rulesets/u);
   assert.match(reservation, /ATLAS_CORE_RELEASE_CLI:.*atlas-core-tag-tool\/cli\.js/u);
   assert.match(reservation, /require-immutable-releases/u);
+  assert.match(createTag, /GIT_CONFIG_VALUE_0=.*authorization/u);
+  assert.match(createTag, /GH_TOKEN: \$\{\{ steps\.app-tag-token\.outputs\.token \}\}/u);
   assert.doesNotMatch(requestValidation, /require-atlas-core-tag-rulesets|require-immutable-releases/u);
+  assert.doesNotMatch(reservation, /ref: \$\{\{ needs\.validate\.outputs\.source_sha \}\}/u);
+  assert.doesNotMatch(trustedCheckout, /token: \$\{\{ steps\.app-/u);
+  assert.doesNotMatch(reservation, /persist-credentials: true|git config[^\n]*extraheader/u);
+  assert.ok(
+    reservation.indexOf("Checkout trusted release control") <
+      reservation.indexOf("Mint read-only release inspection credential")
+  );
+  assert.ok(
+    reservation.indexOf("Prepare the annotated tag without release credentials") <
+      reservation.indexOf("Mint read-only release inspection credential")
+  );
+  assert.ok(
+    reservation.indexOf("Recheck release protections with the release App") <
+      reservation.indexOf("Mint tag-only release credential")
+  );
   assert.doesNotMatch(reservation, /npm (?:ci|run|test|publish)/u);
   assert.doesNotMatch(request, /git push[^\n]*main/u);
 });
@@ -71,5 +98,13 @@ function jobBlock(workflow: string, name: string): string {
   assert.notEqual(start, -1, `missing workflow job ${name}`);
   const remaining = workflow.slice(start + 1);
   const next = remaining.slice(1).search(/\n  [a-z][a-z0-9-]*:\n/u);
+  return next === -1 ? remaining : remaining.slice(0, next + 1);
+}
+
+function stepBlock(job: string, name: string): string {
+  const start = job.indexOf(`\n      - name: ${name}\n`);
+  assert.notEqual(start, -1, `missing workflow step ${name}`);
+  const remaining = job.slice(start + 1);
+  const next = remaining.slice(1).search(/\n      - name:/u);
   return next === -1 ? remaining : remaining.slice(0, next + 1);
 }

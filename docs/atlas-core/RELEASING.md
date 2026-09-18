@@ -138,8 +138,11 @@ Administration access is used only to verify immutable-release settings and the 
 immediately before reservation. Record its client ID as `ATLAS_CORE_RELEASE_APP_CLIENT_ID`, its numeric App ID as the
 repository variable `ATLAS_CORE_RELEASE_APP_ID`, and its private key as the `release-commit` environment secret
 `ATLAS_CORE_RELEASE_APP_PRIVATE_KEY`. The numeric App ID pins every ruleset check to this App rather than accepting any
-integration bypass. The App token exists only in the isolated tag-creation job. That job does not run
-package or repository scripts, and the App no longer needs a `main` protection bypass.
+integration bypass. The isolated tag job checks out the workflow's trusted source with read-only credentials and
+prepares the annotated tag before minting the App token. It never checks out or executes code from the selected release
+source under that token. The write credential is supplied ephemerally to the exact tag push and is not persisted in git
+configuration. Ruleset and immutable-release checks use a separate token with Administration read and Contents read;
+that token cannot create or move tags. The App no longer needs a `main` protection bypass.
 
 Maintain two active tag rulesets targeting only `refs/tags/atlas-core-v*`:
 
