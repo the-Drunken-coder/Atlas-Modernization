@@ -375,6 +375,30 @@ transaction directory and fsyncs its parent last. Because the journal sits outsi
 cannot erase its own recovery data. Catalog acceptance remains monotonic across a failed deployment transaction: a
 rollback may restore deployment files and Plugin selection, but never restores an older catalog receipt or checkpoint.
 
+### Reported outcomes
+
+The transaction manager supplies the evidence used by direct commands and the TUI. Callers do not infer an outcome from
+error wording, from having entered a manager call, or from file rollback alone. Plugin install, enable, disable, update,
+rollback, and uninstall failures use these outcomes:
+
+| Outcome | Established fact and operator action |
+| --- | --- |
+| Rejected | The requested mutation did not begin changing Plugin state. Correct the reported validation or precondition failure; no restoration is claimed. |
+| Restored | The operation failed or was cancelled, and the manager completed the recovery required for the recorded previous state. This does not claim current Plugin health or that Atlas is running. |
+| Recovery incomplete | The operation failed and required recovery has not completed. The journal remains; run `atlas-core recover status` before retrying a mutation. |
+| Change committed, cleanup incomplete | The requested change committed, but transaction or lock cleanup did not complete. The command fails; run `atlas-core recover status` before another mutation instead of assuming the previous state remains selected. |
+| Unknown | Available evidence cannot establish whether an earlier transaction committed or restored. Inspect `atlas-core recover status` and the reported journal error. The CLI retains the evidence and makes no state claim. |
+
+A failure while recovering an earlier pending transaction is not a rejection of that earlier transaction, even when the
+new request did not begin. Readable validated journal evidence and facts established by the manager take precedence over
+the unknown fallback. If a pending journal cannot be parsed and no fact survives, the CLI may say that the new request
+did not begin, but it reports the earlier outcome as unknown.
+
+Cancellation remains a separate fact and cannot replace an established recovery outcome. Cancellation before mutation
+or after completed recovery may finish safely. Incomplete recovery or cleanup remains a failure, and a cancellation
+request received after commit does not relabel the committed change as restored. Original operation errors, recovery
+errors, and later cleanup errors remain distinct diagnostics when they all occur.
+
 Install performs these steps:
 
 1. load a fresh signed catalog and verify sequence, expiry, and revocation;
@@ -390,9 +414,9 @@ root deployment state, and recreates Core, Source Gateway, and the Plugin when A
 base bundle and exact Core image. It waits for base readiness, Plugin health, and public Plugin discovery. Discovery must
 match the release manifest fields and may advertise only interaction kinds declared by the release. Docker inspection
 must separately prove that the container uses the release's digest-pinned image and recorded local image ID. Failure
-restores state, files, and the previous composition. A stopped Atlas deployment remains stopped; the next normal start
-regenerates and validates active files, verifies exact image identity, and relies on Core's asynchronous Plugin status
-checks instead of gating base startup on Plugin health.
+starts recovery of the previous state and composition. The CLI reports restoration only after that recovery completes.
+A stopped Atlas deployment remains stopped; the next normal start regenerates and validates active files, verifies exact
+image identity, and relies on Core's asynchronous Plugin status checks instead of gating base startup on Plugin health.
 
 When the selected release is permitted, update selects the greatest compatible, non-revoked stable version newer than
 it and reports that the Plugin is current when none exists. When the selected release is revoked, update instead selects
@@ -404,8 +428,13 @@ not restart Atlas. Updating an Enabled Plugin requires Atlas to be running; when
 operator to start Atlas or disable the Plugin first. While enabled, update stages
 candidate active files, validates Compose, pulls the candidate digest, recreates the affected services with pulling
 disabled, and waits for the same image, health, and discovery checks. Only then does it commit selected and previous
-release state, including both durable image receipts. Failure restores the old release, active files, deployment state,
-and running composition.
+release state, including both durable image receipts. Failure starts recovery of the old release, active files,
+deployment state, and running composition; the reported outcome says whether that recovery completed.
+
+The direct `plugins update <plugin_id|all>` command treats Ctrl-C as a cancellation request. It sends the request once,
+waits for the active transaction to finish recovery or cleanup, and removes its signal listener on every terminal path.
+A completed cancellation exits 130. Incomplete recovery or cleanup exits 1 and remains a recovery failure rather than a
+safe cancellation. A signal received after commit does not change the committed result.
 
 Rollback uses the update transaction with the retained previous release. The catalog must be fresh, and that release
 must remain compatible and non-revoked. After success, selected and previous records swap, which permits an explicit
@@ -417,8 +446,10 @@ and Docker cache. A running deployment recreates Core and Source Gateway and wai
 stopped.
 
 `update all` processes every Installed Plugin in sorted Plugin ID order. Each Plugin is its own transaction. The command
-stops at the first failure, reports already updated Plugins, and leaves the failed Plugin on its prior release. It does
-not roll back unrelated successful Plugin updates.
+stops at the first failure or completed cancellation and reports already updated Plugins. Those earlier updates remain
+committed and are not rolled back with the current Plugin. The current Plugin's established outcome determines whether
+its prior release remains selected; the command does not claim preservation when recovery is incomplete, cleanup failed
+after commit, or the outcome is unknown.
 
 ## Core update and normal start
 
@@ -519,6 +550,15 @@ disables, or uninstalls them without operator approval.
 
 ### Recovery completion
 
-A completed file rollback does not complete recovery. The CLI retains the transaction until the restored runtime passes the required checks, and retries those checks after a failed restart. This applies to paired Core restore as well as Plugin changes. Plugin failures in the running CLI and recovery after a process restart use the same manager-owned rollback path.
+A completed file rollback does not complete recovery. The CLI retains the transaction until the restored runtime passes
+the required checks, and retries those checks after a failed restart. This applies to paired Core restore as well as
+Plugin changes. Plugin failures in the running CLI and recovery after a process restart use the same manager-owned
+rollback path. An incomplete or unknown recovery, or cleanup left after commit, requires `atlas-core recover status`
+before another mutation.
 
-Before changing a running Enabled Plugin, the transaction records whether it passes runtime acceptance. Recovery waits for base services and verifies the restored Plugin image in every case. A Plugin that was already unavailable is restarted without waiting for its health or discovery, so another disable or update can repair it. Previously healthy Plugins must pass runtime acceptance before recovery completes.
+Before changing a running Enabled Plugin, the transaction records whether it passes runtime acceptance. Recovery waits
+for base services and verifies the restored Plugin image in every case. A Plugin that was already unavailable is
+restarted without waiting for its health or discovery, so another disable or update can repair it. Previously healthy
+Plugins must pass runtime acceptance before recovery completes. Recovery also honors durable stopped intent. Therefore,
+a restored outcome confirms the required recovery checks for the recorded prior condition, but does not promise that an
+already unavailable Plugin became healthy or that a stopped deployment started.
