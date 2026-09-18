@@ -9,7 +9,6 @@ from pathlib import Path
 from coverage_profile import Floor, ProfileError, displayed_percent
 from coverage_profile import read_profile as read_grouped_profile
 
-
 GROUP_PATHS = {
     "actions": "/internal/actions/",
     "database": "/internal/database/",
