@@ -24,8 +24,8 @@ func TestRequestValidationConformance(t *testing.T) {
 
 	for index, testCase := range cases {
 		// Task and runtime request shapes are exercised by handler and Task-module tests with
-		// fixture Commands. The external integration server intentionally uses the empty
-		// production catalog, so it cannot create a Task fixture for lifecycle requests.
+		// fixture Commands. The external integration server has no Asset runtime or Task
+		// fixtures, so it cannot serve lifecycle requests for them.
 		if strings.HasPrefix(testCase.Definition, "Task") || strings.HasPrefix(testCase.Definition, "Runtime") {
 			continue
 		}

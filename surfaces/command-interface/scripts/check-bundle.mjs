@@ -22,8 +22,8 @@ const budgets = {
   initialJavaScript: { raw: 436_500, gzip: 132_000 },
   initialCss: { raw: 513_000, gzip: 55_000 },
   // Includes Geo Feature creation and token-fenced deletion, Task cancellation,
-  // command fixes, and draft lifecycle.
-  shellJavaScript: { raw: 162_000, gzip: 52_000 },
+  // flight command forms (takeoff, go-to, RTL, land), command fixes, and draft lifecycle.
+  shellJavaScript: { raw: 168_000, gzip: 54_000 },
   // Includes live drawing previews, keyboard vertex controls, focus restoration,
   // heartbeat-qualified symbols, and the first-vertex close control.
   mapViewJavaScript: { raw: 76_000, gzip: 23_500 },
@@ -32,9 +32,9 @@ const budgets = {
   milsymbolJavaScript: { raw: 900_000, gzip: 240_000 },
   mapLibreCss: { raw: 85_000, gzip: 11_000 },
   mapRoute: { raw: 2_100_000, gzip: 550_000 },
-  // MapLibre 6.8 and rolldown minifier drift bring the combined build to about 3,714.5 kB raw / 1,029.4 kB gzip.
+  // MapLibre 6.8, flight command forms, and rolldown minifier drift bring the combined build to about 3,725 kB raw / 1,032.5 kB gzip.
   // Retain a small allowance for Linux zlib variance.
-  allJavaScript: { raw: 3_721_000, gzip: 1_033_000 },
+  allJavaScript: { raw: 3_728_000, gzip: 1_035_000 },
   allCss: { raw: 603_000, gzip: 67_000 }
 };
 

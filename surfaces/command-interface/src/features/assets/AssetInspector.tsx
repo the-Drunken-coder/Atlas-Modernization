@@ -3,15 +3,20 @@ import { useMemo } from "react";
 import { type CommandAvailability, commandsForTargeting } from "../../atlas/command-targeting.js";
 import {
   entityAltitude,
+  entityArmed,
   entityBattery,
   entityConnectionStatus,
   entityDisplayName,
+  entityFlightMode,
   entityHeading,
   entityHeartbeatLastSeen,
+  entityLaunchElevation,
   entityPosition,
   entitySpeed,
   entityStatusValue,
-  heartbeatLevel
+  entityTelemetryUpdatedAt,
+  heartbeatLevel,
+  telemetryInputFresh
 } from "../../atlas/entities.js";
 import { formatNumber, formatPercent, formatRelativeTime } from "../../atlas/format.js";
 import { activeTasks, queuedTasks, tasksForAsset } from "../../atlas/selectors.js";
@@ -69,6 +74,11 @@ export function AssetInspector({
   const sidebarCommands = catalog
     ? [...commandsForTargeting(catalog, entity, "none"), ...commandsForTargeting(catalog, entity, "map_point")]
     : [];
+  const armed = entityArmed(entity);
+  const flightMode = entityFlightMode(entity);
+  const launchElevation = entityLaunchElevation(entity);
+  const telemetryFresh = telemetryInputFresh(entity, now);
+  const telemetryUpdatedAt = entityTelemetryUpdatedAt(entity);
 
   return (
     <div className="inspector">
@@ -104,6 +114,25 @@ export function AssetInspector({
             ["Altitude", formatNumber(entityAltitude(entity), { unit: "m", digits: 0 })],
             ["Heading", formatNumber(entityHeading(entity), { unit: "°", digits: 0 })],
             ["Speed", formatNumber(entitySpeed(entity), { unit: "m/s", digits: 1 })]
+          ]}
+        />
+      </Section>
+
+      <Section title="Flight">
+        <FieldGrid
+          rows={[
+            ["Armed", armed === undefined ? "N/A" : armed ? "Armed" : "Disarmed"],
+            ["Flight mode", flightMode ?? "N/A"],
+            [
+              "Launch elevation",
+              launchElevation !== undefined ? formatNumber(launchElevation, { unit: "m MSL", digits: 1 }) : "N/A"
+            ],
+            [
+              "Telemetry",
+              telemetryUpdatedAt
+                ? `${telemetryFresh ? "Fresh" : "Stale"} · ${formatRelativeTime(telemetryUpdatedAt, now)}`
+                : "N/A"
+            ]
           ]}
         />
       </Section>

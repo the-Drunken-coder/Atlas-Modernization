@@ -1021,13 +1021,31 @@ func entityChangeEventCount(ctx context.Context, t *testing.T, pool interface {
 	return count
 }
 
-func TestProductionCatalogRejectsEveryCommand(t *testing.T) {
+func TestProductionCatalogServesFlightCommands(t *testing.T) {
 	var catalog protocol.CommandCatalog
 	if err := json.Unmarshal([]byte(protocol.CommandCatalogJSON), &catalog); err != nil {
 		t.Fatal(err)
 	}
-	if len(catalog) != 0 {
-		t.Fatalf("production Command Catalog has %d entries, want zero", len(catalog))
+	want := map[string]struct{}{
+		"flight.goto":             {},
+		"flight.land":             {},
+		"flight.return_to_launch": {},
+		"flight.takeoff":          {},
+	}
+	if len(catalog) != len(want) {
+		t.Fatalf("production Command Catalog has %d entries, want %d", len(catalog), len(want))
+	}
+	for _, command := range catalog {
+		if _, ok := want[command.Command]; !ok {
+			t.Fatalf("unexpected production Command %q", command.Command)
+		}
+		if command.Scheduling != protocol.CommandSchedulingImmediate {
+			t.Fatalf("production Command %q scheduling = %q, want immediate", command.Command, command.Scheduling)
+		}
+		delete(want, command.Command)
+	}
+	for missing := range want {
+		t.Fatalf("production Command Catalog is missing %q", missing)
 	}
 	if _, ok := NewTaskActionsWithCatalog(nil, catalog).catalog["fixture.immediate"]; ok {
 		t.Fatal("production Task module accepted fixture Command")

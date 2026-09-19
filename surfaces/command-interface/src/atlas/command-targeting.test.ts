@@ -50,3 +50,60 @@ describe("command targeting", () => {
     expect(commandsForTargeting(catalog, { ...asset(manifest), entity_type: "track" }, "none", registry)).toEqual([]);
   });
 });
+
+describe("flight command targeting", () => {
+  const flightCatalog: CommandCatalog = [
+    { command: "flight.takeoff", name: "Takeoff", description: "Climb.", input_schema: "atlas.flight.TakeoffRequest" },
+    { command: "flight.goto", name: "Go to", description: "Fly.", input_schema: "atlas.flight.GotoRequest" },
+    {
+      command: "flight.return_to_launch",
+      name: "Return to launch",
+      description: "Recover.",
+      input_schema: "atlas.tasking.EmptyObject"
+    },
+    { command: "flight.land", name: "Land", description: "Land.", input_schema: "atlas.tasking.EmptyObject" }
+  ];
+  const flightManifest: EntityResource["command_manifest"] = [
+    {
+      command: "flight.takeoff",
+      description: "Climb.",
+      scheduling: "immediate",
+      supports_cancel: false,
+      supports_progress: false
+    },
+    {
+      command: "flight.goto",
+      description: "Fly.",
+      scheduling: "immediate",
+      supports_cancel: true,
+      supports_progress: true
+    },
+    {
+      command: "flight.return_to_launch",
+      description: "Recover.",
+      scheduling: "immediate",
+      supports_cancel: false,
+      supports_progress: false
+    },
+    {
+      command: "flight.land",
+      description: "Land.",
+      scheduling: "immediate",
+      supports_cancel: false,
+      supports_progress: false
+    }
+  ];
+
+  it("exposes go-to for map points and the rest for the sidebar", async () => {
+    const { COMMAND_INPUT_REGISTRY } = await import("../features/commands/command-input-registry.js");
+    const aircraft = asset(flightManifest);
+    const mapCommands = commandsForTargeting(flightCatalog, aircraft, "map_point", COMMAND_INPUT_REGISTRY);
+    expect(mapCommands.map((entry) => entry.command.command)).toEqual(["flight.goto"]);
+    const sidebarCommands = commandsForTargeting(flightCatalog, aircraft, "none", COMMAND_INPUT_REGISTRY);
+    expect(sidebarCommands.map((entry) => entry.command.command).sort()).toEqual([
+      "flight.land",
+      "flight.return_to_launch",
+      "flight.takeoff"
+    ]);
+  });
+});

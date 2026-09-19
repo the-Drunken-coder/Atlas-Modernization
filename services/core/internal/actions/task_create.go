@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -23,6 +24,26 @@ type CreateTaskParams struct {
 	AssetID string
 	Command string
 	Input   protocol.JSONValue
+}
+
+// flightSupersessionTargets maps a newly created flight Command to the active
+// flight Commands it replaces. A new go-to replaces an active go-to so an
+// operator can redirect without building a movement queue; return-to-launch
+// and land interrupt an active takeoff or go-to as the agreed recovery action.
+// Supersession is Core policy so the authoritative Task history stays in one
+// place: the host must never label a Task superseded itself.
+var flightSupersessionTargets = map[string]map[string]struct{}{
+	"flight.goto": {
+		"flight.goto": {},
+	},
+	"flight.return_to_launch": {
+		"flight.takeoff": {},
+		"flight.goto":    {},
+	},
+	"flight.land": {
+		"flight.takeoff": {},
+		"flight.goto":    {},
+	},
 }
 
 // Create validates and persists one tasking attempt. The opaque key is stored
@@ -107,11 +128,14 @@ func (a *TaskActions) Create(ctx context.Context, params CreateTaskParams, idemp
 		return nil, false, NewValidationErrorWithDetails("Invalid Command input", validationErrors)
 	}
 
+	taskID := "task-" + uuid.NewString()
+	if err := supersedeReplacedFlightTasks(ctx, tx, params.AssetID, runtimeID, params.Command, taskID); err != nil {
+		return nil, false, err
+	}
 	version, err := nextChangeVersion(ctx, tx)
 	if err != nil {
 		return nil, false, err
 	}
-	taskID := "task-" + uuid.NewString()
 	task, err := scanTask(tx.QueryRow(ctx, `
 		INSERT INTO tasks (task_id, asset_id, command, input, idempotency_key, runtime_id, version)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -127,6 +151,54 @@ func (a *TaskActions) Create(ctx context.Context, params CreateTaskParams, idemp
 		return nil, false, fmt.Errorf("commit Task create: %w", err)
 	}
 	return task, true, nil
+}
+
+// supersedeReplacedFlightTasks cancels the active flight Tasks that the new
+// flight Command replaces, using the Core-only superseded code. It runs in the
+// creation transaction while the Asset runtime row is locked, so the replaced
+// Tasks cannot start between supersession and the new insert, and a repeated
+// delivery of the same idempotency key never supersedes twice.
+func supersedeReplacedFlightTasks(ctx context.Context, tx pgx.Tx, assetID, runtimeID, command, newTaskID string) error {
+	targets, ok := flightSupersessionTargets[command]
+	if !ok {
+		return nil
+	}
+	replaced := make([]string, 0, len(targets))
+	for target := range targets {
+		replaced = append(replaced, target)
+	}
+	rows, err := tx.Query(ctx, taskSelectSQL+` WHERE asset_id = $1 AND runtime_id = $2
+		AND status IN ('pending', 'acknowledged', 'in_progress')
+		AND command = ANY($3) ORDER BY created_at, task_id FOR UPDATE`,
+		assetID, runtimeID, replaced)
+	if err != nil {
+		return fmt.Errorf("lock superseded flight Tasks: %w", err)
+	}
+	tasks, err := collectRows(rows, taskResourceQuery)
+	if err != nil {
+		return err
+	}
+	if len(tasks) == 0 {
+		return nil
+	}
+	var now time.Time
+	if err := tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
+		return fmt.Errorf("read database time for flight supersession: %w", err)
+	}
+	now = now.UTC()
+	for _, task := range tasks {
+		cancellation := protocol.TaskCancellation{
+			Code:    protocol.TaskCancellationCodeSuperseded,
+			Message: fmt.Sprintf("Superseded by %s task %s.", command, newTaskID),
+		}
+		if _, err := cancelTask(task, protocol.CommandDefinition{}, protocol.CommandManifestEntry{}, now, cancellation); err != nil {
+			return fmt.Errorf("supersede flight Task %s: %w", task.TaskID, err)
+		}
+		if _, err := persistTaskState(ctx, tx, task); err != nil {
+			return fmt.Errorf("persist superseded flight Task %s: %w", task.TaskID, err)
+		}
+	}
+	return nil
 }
 
 func jsonEqual(left, right []byte) bool {

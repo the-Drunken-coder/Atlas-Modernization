@@ -38,7 +38,7 @@ Configuration, session-check, and initial SDK connection failures expose one-sho
 
 Command availability fails closed. A Command appears only when it exists in the Protocol-owned catalog, appears in the selected Asset's read-only current `command_manifest`, and has a purpose-built input registered in the interface.
 
-Command submission posts `{ asset_id, command, input }` directly to Core with a fresh idempotency key for that tasking attempt. Core validates the generated catalog, current ready runtime manifest, and input, then generates the Task ID. The initial generated catalog and interface registry are empty, so the UI intentionally shows that no Commands are defined.
+Command submission posts `{ asset_id, command, input }` directly to Core with a fresh idempotency key for that tasking attempt. Core validates the generated catalog, current ready runtime manifest, and input, then generates the Task ID. The catalog ships the `flight` Commands (takeoff, go-to, return-to-launch, land) with dedicated flight input forms; an Asset with no ready manifest still shows that no Commands are available.
 
 Generic schema-generated forms are not part of the interface. Adding a Command includes its purpose-built operator input, tests, Protocol schema, Asset handler, and any special Core policy through the [Command authoring guide](../../packages/protocol/commands/README.md).
 

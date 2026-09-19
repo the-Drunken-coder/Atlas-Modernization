@@ -1,30 +1,30 @@
 [
   {
     "command": "flight.goto",
+    "name": "Go to",
     "description": "Fly to an absolute destination and hold position. Completion means reaching the requested position and altitude, followed by idle hold.",
     "input_schema": "atlas.flight.GotoRequest",
-    "name": "Go to",
     "scheduling": "immediate"
   },
   {
     "command": "flight.land",
+    "name": "Land",
     "description": "Land at the current location and disarm. Completion means touchdown and disarm; the maneuver cannot be ordinarily cancelled once started.",
     "input_schema": "atlas.tasking.EmptyObject",
-    "name": "Land",
     "scheduling": "immediate"
   },
   {
     "command": "flight.return_to_launch",
+    "name": "Return to launch",
     "description": "Return to launch, land, and disarm for recovery. Completion means recovery at launch; the maneuver cannot be ordinarily cancelled once started.",
     "input_schema": "atlas.tasking.EmptyObject",
-    "name": "Return to launch",
     "scheduling": "immediate"
   },
   {
     "command": "flight.takeoff",
+    "name": "Takeoff",
     "description": "Climb an already-armed aircraft to the requested altitude and settle into a hover. Completion means reaching the altitude and holding; arming is never performed by this command.",
     "input_schema": "atlas.flight.TakeoffRequest",
-    "name": "Takeoff",
     "scheduling": "immediate"
   }
 ]
