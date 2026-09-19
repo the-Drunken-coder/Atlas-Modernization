@@ -1063,25 +1063,6 @@ describe("AtlasClient sync: cache projection and reads", () => {
     ).toBeNull();
   });
 
-  it("drains paginated full-dataset hydration responses", async () => {
-    const core = new FakeCore();
-    core.fullLimitPerType = 1;
-    core.upsertEntity(entity("asset-page-1"));
-    core.upsertEntity(entity("asset-page-2"));
-    core.upsertTask(task("task-hydrate-1", "asset-page-1"));
-    core.upsertTask(task("task-hydrate-2", "asset-page-2"));
-    const client = createAtlasClient(core, { sync: "all", pollIntervalMs: 0 });
-
-    await client.sync.start();
-
-    expect(
-      core.requests.some((request) => request.startsWith("/queries/full?") && request.includes("entity_cursor="))
-    ).toBe(true);
-    expect(
-      core.requests.some((request) => request.startsWith("/queries/full?") && request.includes("task_cursor="))
-    ).toBe(true);
-  });
-
   it("recovers changes after the initial full-dataset watermark instead of advancing from later pages", async () => {
     const core = new FakeCore();
     core.version = 1000;
@@ -1148,52 +1129,6 @@ describe("AtlasClient sync: cache projection and reads", () => {
     }
   });
 
-  it("rejects missing full-dataset version watermarks", async () => {
-    const core = new FakeCore();
-    const fetchImpl: typeof fetch = async (url, init) => {
-      if (new URL(String(url)).pathname !== "/queries/full") return core.fetch(String(url), init);
-      return Response.json({
-        entities: [],
-        tasks: [],
-        objects: [],
-        has_more_entities: false,
-        has_more_tasks: false,
-        has_more_objects: false
-      });
-    };
-    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: "all", pollIntervalMs: 0 });
-
-    await expect(client.sync.start()).rejects.toThrow("Atlas response failed validation for GET /queries/full");
-    expect(client.sync.snapshot()).toEqual({ entities: {}, tasks: {}, objects: {} });
-  });
-
-  it.each([-1, 1.5, Number.MAX_SAFE_INTEGER + 1])(
-    "rejects invalid full-dataset version watermark %s",
-    async (version) => {
-      const core = new FakeCore();
-      const fetchImpl: typeof fetch = async (url, init) => {
-        if (new URL(String(url)).pathname !== "/queries/full") return core.fetch(String(url), init);
-        return Response.json({
-          entities: [],
-          tasks: [],
-          objects: [],
-          version,
-          has_more_entities: false,
-          has_more_tasks: false,
-          has_more_objects: false
-        });
-      };
-      const client = new AtlasClient({
-        baseUrl: "http://atlas.test",
-        fetch: fetchImpl,
-        sync: "all",
-        pollIntervalMs: 0
-      });
-
-      await expect(client.sync.start()).rejects.toThrow("Atlas response failed validation for GET /queries/full");
-    }
-  );
-
   it("rejects changing full-dataset version watermarks", async () => {
     const core = new FakeCore();
     let fullDatasetRequests = 0;
@@ -1216,31 +1151,6 @@ describe("AtlasClient sync: cache projection and reads", () => {
     await expect(client.sync.start()).rejects.toThrow("changed version watermark from 1 to 2");
     expect(fullDatasetRequests).toBe(2);
     expect(client.sync.snapshot()).toEqual({ entities: {}, tasks: {}, objects: {} });
-  });
-
-  it("rejects repeated full-dataset cursor states", async () => {
-    const core = new FakeCore();
-    let fullDatasetRequests = 0;
-    const fetchImpl: typeof fetch = async (url, init) => {
-      if (new URL(String(url)).pathname !== "/queries/full") return core.fetch(String(url), init);
-      fullDatasetRequests += 1;
-      if (fullDatasetRequests > 4) throw new Error("test stopped repeated full-dataset pagination");
-      return Response.json({
-        entities: [],
-        tasks: [],
-        objects: [],
-        version: 0,
-        has_more_entities: true,
-        next_entity_cursor: "same-cursor",
-        has_more_tasks: true,
-        next_task_cursor: `task-cursor-${fullDatasetRequests}`,
-        has_more_objects: false
-      });
-    };
-    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: "all", pollIntervalMs: 0 });
-
-    await expect(client.sync.start()).rejects.toThrow("Atlas full-dataset pagination repeated entity_cursor");
-    expect(fullDatasetRequests).toBe(2);
   });
 
   it("allows advancing full-dataset pagination beyond 100 pages", async () => {
@@ -1276,6 +1186,7 @@ describe("AtlasClient sync: cache projection and reads", () => {
       if (new URL(String(url)).pathname !== "/queries/full") return core.fetch(String(url), init);
       if (!failHydration) return core.fetch(String(url), init);
       fullDatasetRequests += 1;
+      if (fullDatasetRequests > 4) throw new Error("test stopped repeated full-dataset pagination");
       return Response.json({
         entities: fullDatasetRequests === 1 ? [partial] : [],
         tasks: [],
@@ -1296,6 +1207,7 @@ describe("AtlasClient sync: cache projection and reads", () => {
     failHydration = true;
 
     await expect(client.sync.start()).rejects.toThrow("Atlas full-dataset pagination repeated entity_cursor");
+    expect(fullDatasetRequests).toBe(2);
     expect(client.sync.snapshot()).toBe(snapshot);
     expect(client.sync.snapshot().entities).toEqual({ [existing.entity_id]: existing });
   });

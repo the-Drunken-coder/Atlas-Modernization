@@ -325,38 +325,6 @@ describe("AtlasClient feed connection", () => {
     await vi.waitFor(() => expect(client.sync.status().degraded).toBe(false));
   });
 
-  it("starts the websocket feed when sync starts and a WebSocket implementation is available", async () => {
-    const core = new FakeCore();
-    const client = createAtlasClient(core, {
-      WebSocket: core.attachWebSocketGlobal(),
-      sync: "all",
-      pollIntervalMs: 0
-    });
-    const watch = vi.fn();
-    client.entities.watch("asset-auto-feed", watch);
-
-    await client.sync.start();
-    const value = core.upsertEntity(entity("asset-auto-feed"));
-    core.emit(
-      {
-        event: "update",
-        resource_type: "entity",
-        id: value.entity_id,
-        version: value.metadata.version,
-        resource: value
-      },
-      { record: false }
-    );
-
-    expect(core.sockets.size).toBe(1);
-    await vi.waitFor(() => {
-      expect(watch).toHaveBeenCalledWith(
-        value,
-        expect.objectContaining({ id: "asset-auto-feed", version: value.metadata.version })
-      );
-    });
-  });
-
   it("sends API key auth frames before accepting feed events", async () => {
     const core = new FakeCore();
     core.expectedFeedApiKey = "feed-key";

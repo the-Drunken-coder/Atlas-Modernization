@@ -15,7 +15,6 @@ func TestPluginToolAssetOwnershipAndDeletionBoundary(t *testing.T) {
 	defer cancel()
 	pluginID := "reference"
 	assetID := pluginid.DeriveToolAssetID(pluginID)
-	defer cleanupFinalBlobValidationRowsWithTimeout(t, pool, assetID, "")
 
 	configuredEntities := NewEntityActionsWithPlugins(pool, []string{pluginID})
 	if _, err := configuredEntities.Create(ctx, CreateEntityParams{
@@ -76,7 +75,6 @@ func TestPluginToolAssetRegistrationRejectsOwnershipConflicts(t *testing.T) {
 	defer cancel()
 	pluginID := "reference"
 	assetID := pluginid.DeriveToolAssetID(pluginID)
-	defer cleanupFinalBlobValidationRowsWithTimeout(t, pool, assetID, "")
 
 	if _, err := NewEntityActions(pool).Create(ctx, CreateEntityParams{
 		EntityID: assetID, EntityType: "asset", Subtype: "tool",
@@ -94,7 +92,6 @@ func TestRegisteredNonPluginAssetCanChangeSubtype(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	assetID := "non_plugin_subtype_fixture"
-	defer cleanupFinalBlobValidationRowsWithTimeout(t, pool, assetID, "")
 
 	entities := NewEntityActions(pool)
 	if _, err := entities.Create(ctx, CreateEntityParams{

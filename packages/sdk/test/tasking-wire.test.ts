@@ -24,7 +24,7 @@ describe("Task lifecycle SDK requests", () => {
       const runtimeRequests = core.requestHeaders.filter((request) =>
         testCase.operations.some((operation) => request.path.endsWith(`/${operation}`))
       );
-      expect(runtimeRequests.every((request) => request.runtimeId === "runtime-1")).toBe(true);
+      expect(runtimeRequests.map((request) => request.runtimeId)).toEqual(testCase.operations.map(() => "runtime-1"));
     });
   }
 });

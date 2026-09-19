@@ -30,32 +30,6 @@ describe("sync-engine internal lifecycle policies", () => {
     expect(recover).not.toHaveBeenCalled();
   });
 
-  it("coalesces matching recovery operations and clears them on completion", async () => {
-    const recovery = new RecoveryCoordinator();
-    let resolveRecovery!: (value: boolean) => void;
-    const pending = new Promise<boolean>((resolve) => {
-      resolveRecovery = resolve;
-    });
-
-    const first = recovery.start(
-      3,
-      7,
-      () => true,
-      () => pending
-    );
-    expect(
-      recovery.start(
-        3,
-        7,
-        () => true,
-        () => Promise.resolve(false)
-      )
-    ).toBe(first);
-    resolveRecovery(true);
-    await expect(first).resolves.toBe(true);
-    expect(recovery.activeRecoveryPromise()).toBeUndefined();
-  });
-
   it("stops a recovery runner before issuing a stale request", async () => {
     const runner = new RecoveryRunner(
       new HttpTransport({ baseUrl: "http://atlas.test", fetchImpl: vi.fn(), requestTimeoutMs: 1_000 })

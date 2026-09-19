@@ -23,7 +23,7 @@ type UpsertCase<TResource extends ResourceValue> = {
 
 describe("two-client feed harness", () => {
   for (const scenario of upsertCases()) {
-    it(`delivers writer ${scenario.name} creates to a receiving SDK within one second`, async () => {
+    it(`delivers writer ${scenario.name} creates, updates, and deletes to a receiving SDK within one second`, async () => {
       const harness = createTwoClientFeedHarness();
       const { core, writer, receiver, stop } = harness;
       const watch = vi.fn();
@@ -31,6 +31,7 @@ describe("two-client feed harness", () => {
 
       try {
         await receiver.sync.start();
+        expect(core.feedConnections).toBe(1);
         core.requests = [];
 
         const written = await scenario.create(writer);
@@ -42,21 +43,6 @@ describe("two-client feed harness", () => {
           version: written.metadata.version
         });
         await scenario.assertRead(harness, written);
-      } finally {
-        stop();
-      }
-    });
-
-    it(`delivers writer ${scenario.name} updates to a receiving SDK within one second`, async () => {
-      const harness = createTwoClientFeedHarness();
-      const { core, writer, receiver, stop } = harness;
-      const watch = vi.fn();
-      scenario.watch(receiver, watch);
-
-      try {
-        await receiver.sync.start();
-        await scenario.create(writer);
-        await vi.waitFor(() => expect(watch).toHaveBeenCalled(), { timeout: 1_000 });
         watch.mockClear();
         core.requests = [];
 
@@ -69,21 +55,6 @@ describe("two-client feed harness", () => {
           version: updated.metadata.version
         });
         await scenario.assertRead(harness, updated);
-      } finally {
-        stop();
-      }
-    });
-
-    it(`delivers writer ${scenario.name} deletes to a receiving SDK within one second`, async () => {
-      const harness = createTwoClientFeedHarness();
-      const { core, writer, receiver, stop } = harness;
-      const watch = vi.fn();
-      scenario.watch(receiver, watch);
-
-      try {
-        await receiver.sync.start();
-        await scenario.create(writer);
-        await vi.waitFor(() => expect(watch).toHaveBeenCalled(), { timeout: 1_000 });
         watch.mockClear();
         core.requests = [];
 

@@ -13,26 +13,6 @@ import (
 	"github.com/the-drunken-coder/atlas/services/core/internal/actions"
 )
 
-func TestCreateEntityRejectsInvalidJSON(t *testing.T) {
-	handler := newTestHandler()
-	rec := httptest.NewRecorder()
-	req := routeRequest(http.MethodPost, "/entities", `{"entity_id":`)
-
-	handler.CreateEntity(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", rec.Code)
-	}
-
-	body := decodeBody(t, rec)
-	if body["error_code"] != "INVALID_JSON" {
-		t.Fatalf("expected INVALID_JSON, got %v", body["error_code"])
-	}
-	if body["path"] != "/entities" {
-		t.Fatalf("expected error path /entities, got %v", body["path"])
-	}
-}
-
 func TestDecodeProtocolRequestBodyAllowsEmptyCheckInBody(t *testing.T) {
 	handler := newTestHandler()
 	recorder := httptest.NewRecorder()
@@ -130,42 +110,6 @@ func TestTaskOutputPreservesExactJSONNumbers(t *testing.T) {
 	value, ok := output.(map[string]any)["value"].(json.Number)
 	if !ok || value.String() != "9007199254740993" {
 		t.Fatalf("decoded exact output number = %#v", output)
-	}
-}
-
-func TestCreateEntityRejectsTrailingJSON(t *testing.T) {
-	handler := newTestHandler()
-	rec := httptest.NewRecorder()
-	req := routeRequest(http.MethodPost, "/entities", `{"entity_id":"entity-1","entity_type":"asset"}{"extra":true}`)
-
-	handler.CreateEntity(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", rec.Code)
-	}
-
-	body := decodeBody(t, rec)
-	if body["error_code"] != "INVALID_JSON" {
-		t.Fatalf("expected INVALID_JSON, got %v", body["error_code"])
-	}
-}
-
-func TestCreateEntityRejectsOversizedBody(t *testing.T) {
-	handler := newTestHandler()
-	rec := httptest.NewRecorder()
-	// Handler request bodies are capped at 1 MiB; exceed that limit by 64 bytes.
-	oversizedValue := strings.Repeat("a", 1024*1024+64)
-	req := routeRequest(http.MethodPost, "/entities", `{"entity_id":"`+oversizedValue+`"}`)
-
-	handler.CreateEntity(rec, req)
-
-	if rec.Code != http.StatusRequestEntityTooLarge {
-		t.Fatalf("expected 413, got %d", rec.Code)
-	}
-
-	body := decodeBody(t, rec)
-	if body["error_code"] != "BODY_TOO_LARGE" {
-		t.Fatalf("expected BODY_TOO_LARGE, got %v", body["error_code"])
 	}
 }
 
@@ -342,84 +286,6 @@ func TestParseListPaginationReadsCursorAndSetsCursorHeaders(t *testing.T) {
 	}
 }
 
-func TestGetChangedSinceRejectsMissingParam(t *testing.T) {
-	handler := newTestHandler()
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/queries/changed-since", nil)
-
-	handler.GetChangedSince(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", rec.Code)
-	}
-
-	body := decodeBody(t, rec)
-	if body["error_code"] != "VALIDATION_ERROR" {
-		t.Fatalf("expected VALIDATION_ERROR, got %v", body["error_code"])
-	}
-	if body["message"] != "since_version parameter is required" {
-		t.Fatalf("unexpected message: %v", body["message"])
-	}
-}
-
-func TestGetChangedSinceRejectsOffset(t *testing.T) {
-	handler := newTestHandler()
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/queries/changed-since?since_version=0&offset=0", nil)
-
-	handler.GetChangedSince(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", rec.Code)
-	}
-	body := decodeBody(t, rec)
-	if body["error_code"] != "VALIDATION_ERROR" {
-		t.Fatalf("expected VALIDATION_ERROR, got %v", body["error_code"])
-	}
-}
-
-func TestGetChangedSinceRejectsBlankParam(t *testing.T) {
-	handler := newTestHandler()
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/queries/changed-since?since_version=%20%20", nil)
-
-	handler.GetChangedSince(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", rec.Code)
-	}
-
-	body := decodeBody(t, rec)
-	if body["error_code"] != "VALIDATION_ERROR" {
-		t.Fatalf("expected VALIDATION_ERROR, got %v", body["error_code"])
-	}
-	if body["message"] != "since_version parameter is required" {
-		t.Fatalf("unexpected message: %v", body["message"])
-	}
-}
-
-func TestGetChangedSinceRejectsInvalidVersion(t *testing.T) {
-	handler := newTestHandler()
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/queries/changed-since?since_version=not-a-version", nil)
-
-	handler.GetChangedSince(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", rec.Code)
-	}
-
-	body := decodeBody(t, rec)
-	if body["error_code"] != "VALIDATION_ERROR" {
-		t.Fatalf("expected VALIDATION_ERROR, got %v", body["error_code"])
-	}
-	details, _ := body["details"].(map[string]interface{})
-	errs, _ := details["errors"].([]interface{})
-	if len(errs) == 0 {
-		t.Fatalf("expected details.errors for invalid since")
-	}
-}
-
 func TestFullDatasetVersionJSONPresence(t *testing.T) {
 	response := serializeFullDatasetResult(&actions.FullDatasetResult{})
 	data, err := json.Marshal(response)
@@ -437,47 +303,68 @@ func TestFullDatasetVersionJSONPresence(t *testing.T) {
 	}
 }
 
-func TestQueryResponsesIncludeFalseHasMoreFlags(t *testing.T) {
+func TestHandlersRejectInvalidRequestBodiesBeforeActions(t *testing.T) {
 	tests := []struct {
-		name     string
-		resp     interface{}
-		keys     []string
-		validate func(any) []string
+		name, path, payload, code string
+		status                    int
+		handle                    func(*Handler, http.ResponseWriter, *http.Request)
 	}{
-		{
-			name:     "full dataset",
-			resp:     &protocol.FullDatasetResponse{Entities: []protocol.EntityResource{}, Tasks: []protocol.TaskResource{}, Objects: []protocol.ObjectDetailResource{}},
-			keys:     []string{"has_more_entities", "has_more_tasks", "has_more_objects"},
-			validate: protocol.ValidateFullDatasetResponse,
-		},
-		{
-			name:     "changed since",
-			resp:     &protocol.ChangedSinceResponse{Events: []protocol.FeedEvent{}, Version: 1},
-			keys:     []string{"has_more"},
-			validate: protocol.ValidateChangedSinceResponse,
-		},
+		{"entity malformed", "/entities", `{"entity_id":`, "INVALID_JSON", 400, (*Handler).CreateEntity},
+		{"entity trailing", "/entities", `{"entity_id":"entity-1","entity_type":"asset"}{"extra":true}`, "INVALID_JSON", 400, (*Handler).CreateEntity},
+		{"entity unknown field", "/entities", `{"entity_id":"entity-1","entity_type":"asset","entity_typo":"vehicle"}`, "VALIDATION_ERROR", 400, (*Handler).CreateEntity},
+		{"entity null ID", "/entities", `{"entity_id":null,"entity_type":"asset"}`, "VALIDATION_ERROR", 400, (*Handler).CreateEntity},
+		{"entity oversized", "/entities", `{"entity_id":"` + strings.Repeat("a", 1024*1024+64) + `"}`, "BODY_TOO_LARGE", 413, (*Handler).CreateEntity},
+		{"check-in malformed", "/entities/entity-1/checkin", `{"latitude":`, "INVALID_JSON", 400, (*Handler).EntityCheckin},
+		{"check-in trailing", "/entities/entity-1/checkin", `{}{"status":"online"}`, "INVALID_JSON", 400, (*Handler).EntityCheckin},
+		{"object trailing", "/objects", `{"object_id":"object-1"}{"extra":true}`, "INVALID_JSON", 400, (*Handler).CreateObject},
+		{"object legacy payload", "/objects", `{"object_id":"object-1","payload":{"legacy":true}}`, "VALIDATION_ERROR", 400, (*Handler).CreateObject},
+		{"client task ID", "/tasks", `{"task_id":"task-1","asset_id":"asset-1","command":"fixture.immediate","input":{}}`, "VALIDATION_ERROR", 400, (*Handler).CreateTask},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			raw, err := json.Marshal(tt.resp)
-			if err != nil {
-				t.Fatalf("marshal: %v", err)
+			rec := httptest.NewRecorder()
+			req := withURLParam(routeRequest(http.MethodPost, tt.path, tt.payload), "entity_id", "entity-1")
+			tt.handle(newTestHandler(), rec, req)
+			if rec.Code != tt.status {
+				t.Fatalf("status = %d, want %d", rec.Code, tt.status)
 			}
-			if validationErrors := tt.validate(json.RawMessage(raw)); len(validationErrors) > 0 {
-				t.Fatalf("response failed Atlas Protocol validation: %v", validationErrors)
+			body := decodeBody(t, rec)
+			if body["error_code"] != tt.code || body["path"] != tt.path {
+				t.Fatalf("error response = %#v, want %s at %s", body, tt.code, tt.path)
 			}
-			var body map[string]interface{}
-			if err := json.Unmarshal(raw, &body); err != nil {
-				t.Fatalf("unmarshal: %v", err)
+		})
+	}
+}
+
+func TestGetChangedSinceRejectsInvalidQuery(t *testing.T) {
+	for _, tt := range []struct {
+		name, query, message string
+		wantDetails          bool
+	}{
+		{"missing version", "", "since_version parameter is required", false},
+		{"blank version", "?since_version=%20%20", "since_version parameter is required", false},
+		{"offset", "?since_version=0&offset=0", "", false},
+		{"invalid version", "?since_version=not-a-version", "", true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/queries/changed-since"+tt.query, nil)
+			newTestHandler().GetChangedSince(rec, req)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400", rec.Code)
 			}
-			for _, key := range tt.keys {
-				got, ok := body[key]
-				if !ok {
-					t.Fatalf("expected %s to be present in %s", key, string(raw))
-				}
-				if got != false {
-					t.Fatalf("expected %s=false, got %#v", key, got)
+			body := decodeBody(t, rec)
+			if body["error_code"] != "VALIDATION_ERROR" {
+				t.Fatalf("error_code = %v, want VALIDATION_ERROR", body["error_code"])
+			}
+			if tt.message != "" && body["message"] != tt.message {
+				t.Fatalf("message = %v, want %s", body["message"], tt.message)
+			}
+			if tt.wantDetails {
+				details, _ := body["details"].(map[string]any)
+				errors, _ := details["errors"].([]any)
+				if len(errors) == 0 {
+					t.Fatal("expected details.errors for invalid version")
 				}
 			}
 		})

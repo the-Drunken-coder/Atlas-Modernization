@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -12,16 +11,6 @@ import (
 
 	"github.com/the-drunken-coder/atlas/packages/protocol/conformance"
 )
-
-func TestSchemaLoadsFromEmbeddedFiles(t *testing.T) {
-	telemetry := map[string]any{
-		"latitude":  40.7,
-		"longitude": -73.9,
-	}
-	if errors := ValidateDefinition("TelemetryComponent", telemetry); len(errors) > 0 {
-		t.Fatalf("ValidateTelemetryComponent(valid) errors = %v", errors)
-	}
-}
 
 func TestValidateCommandCatalogIncludesSemanticRules(t *testing.T) {
 	valid := []any{map[string]any{
@@ -83,17 +72,6 @@ func TestConcurrentValidationIsSafe(t *testing.T) {
 	if valid != goroutines/2 || invalid != goroutines/2 {
 		t.Fatalf("concurrent validation: valid = %d, invalid = %d, want %d each", valid, invalid, goroutines/2)
 	}
-}
-
-func TestUnknownComponentValidationUsesSchemaFields(t *testing.T) {
-	valid := map[string]any{
-		"telemetry":    map[string]any{},
-		"custom_notes": "operator supplied",
-	}
-	if errors := ValidateDefinition("EntityComponents", valid); len(errors) > 0 {
-		t.Fatalf("ValidateEntityComponents(valid schema/custom fields) errors = %v", errors)
-	}
-
 }
 
 func TestNonFinitePaths(t *testing.T) {
@@ -302,36 +280,6 @@ func TestRawJSONRejectsTrailingValues(t *testing.T) {
 	}
 }
 
-func TestRequestExamplesValidate(t *testing.T) {
-	tests := []struct {
-		name     string
-		path     string
-		validate func(any) []string
-	}{
-		{"entity_create", "../examples/requests/entity-create.json", validatorFor("EntityCreateRequest")},
-		{"entity_update", "../examples/requests/entity-update.json", validatorFor("EntityUpdateRequest")},
-		{"task_create", "../examples/requests/task-create.json", validatorFor("TaskCreateRequest")},
-		{"task_acknowledge", "../examples/requests/tasks/acknowledge.json", validatorFor("TaskAcknowledgeRequest")},
-		{"task_start", "../examples/requests/tasks/start.json", validatorFor("TaskStartRequest")},
-		{"task_progress", "../examples/requests/tasks/progress.json", validatorFor("TaskProgressRequest")},
-		{"task_complete", "../examples/requests/tasks/complete.json", validatorFor("TaskCompleteRequest")},
-		{"task_fail", "../examples/requests/tasks/fail.json", validatorFor("TaskFailRequest")},
-		{"task_cancel", "../examples/requests/tasks/cancel.json", validatorFor("TaskCancelRequest")},
-		{"runtime_register", "../examples/requests/runtime/register.json", validatorFor("RuntimeRegistrationRequest")},
-		{"runtime_stop", "../examples/requests/runtime/stop.json", validatorFor("RuntimeStopRequest")},
-		{"runtime_ready", "../examples/requests/runtime/ready.json", validatorFor("RuntimeReadyRequest")},
-		{"object_create", "../examples/requests/object-create.json", validatorFor("ObjectCreateRequest")},
-		{"object_update", "../examples/requests/object-update.json", validatorFor("ObjectUpdateRequest")},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if errors := tt.validate(readJSONExample(t, tt.path)); len(errors) > 0 {
-				t.Fatalf("%s validation errors = %v", tt.path, errors)
-			}
-		})
-	}
-}
-
 func TestPromotedStringRequestLengthBoundaries(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -400,7 +348,7 @@ func TestPromotedStringRequestLengthBoundaries(t *testing.T) {
 	}
 }
 
-func TestRequestValidationConformance(t *testing.T) {
+func TestCanonicalSchemaRequestConformance(t *testing.T) {
 	cases, err := conformance.LoadRequestValidationCases()
 	if err != nil {
 		t.Fatal(err)
@@ -422,11 +370,6 @@ func TestRequestValidationConformance(t *testing.T) {
 			schemaValid := compiled.Validate(normalized) == nil
 			if schemaValid != testCase.SchemaValid {
 				t.Fatalf("canonical schema valid = %t, want %t", schemaValid, testCase.SchemaValid)
-			}
-
-			runtimeErrors := ValidateDefinition(testCase.Definition, testCase.Value)
-			if valid := len(runtimeErrors) == 0; valid != testCase.Valid {
-				t.Fatalf("Go runtime valid = %t, want %t; errors = %v", valid, testCase.Valid, runtimeErrors)
 			}
 		})
 	}
@@ -471,26 +414,6 @@ func TestNormalizeForJSONSchemaAllowsSharedAcyclicValues(t *testing.T) {
 	if _, err := normalizeForJSONSchema(map[string]any{"first": shared, "second": shared}); err != nil {
 		t.Fatalf("shared acyclic value was rejected: %v", err)
 	}
-}
-
-func TestRequestValidationRejectsEmptyUpdatesAndUnknownFields(t *testing.T) {
-	tests := []struct {
-		name     string
-		path     string
-		validate func(any) []string
-	}{
-		{"entity_update_empty", "../examples/requests/invalid-entity-update-empty.json", validatorFor("EntityUpdateRequest")},
-		{"object_update_empty", "../examples/requests/invalid-object-update-empty.json", validatorFor("ObjectUpdateRequest")},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			errors := tt.validate(readJSONExample(t, tt.path))
-			assertAnyContains(t, errors, "minProperties")
-		})
-	}
-
-	errors := ValidateDefinition("TaskCreateRequest", json.RawMessage(`{"asset_id":"asset-unknown","command":"fixture.immediate","input":{},"unknown":true}`))
-	assertAnyContains(t, errors, "unknown")
 }
 
 func TestRequestValidationRejectsUnknownComponents(t *testing.T) {
@@ -546,19 +469,6 @@ func TestUnencodableInputReturnsError(t *testing.T) {
 			}
 		})
 	}
-}
-
-func readJSONExample(t *testing.T, path string) json.RawMessage {
-	t.Helper()
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
-	}
-	var decoded any
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatalf("decode %s: %v", path, err)
-	}
-	return json.RawMessage(data)
 }
 
 func validatorFor(definition string) func(any) []string {

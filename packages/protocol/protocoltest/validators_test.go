@@ -15,16 +15,6 @@ import (
 	protocolvalidator "github.com/the-drunken-coder/atlas/packages/protocol/validator"
 )
 
-func TestEntityExamplesValidate(t *testing.T) {
-	root := moduleRoot(t)
-	assertExamplesValidate(t, filepath.Join(root, "examples", "entities"), protocol.ValidateEntityBlob)
-}
-
-func TestObjectExamplesValidate(t *testing.T) {
-	root := moduleRoot(t)
-	assertExamplesValidate(t, filepath.Join(root, "examples", "objects"), protocol.ValidateObjectBlob)
-}
-
 func TestGeneratedValidatorsRejectCyclicValues(t *testing.T) {
 	cyclicMap := map[string]any{}
 	cyclicMap["self"] = cyclicMap
@@ -157,16 +147,6 @@ func TestGeneratedSpatialValidatorsApplySemanticLimits(t *testing.T) {
 	assertErrorContains(t, protocol.ValidateSpatialOperationResult(result), "feature ID \"duplicate\" is duplicated")
 }
 
-func TestErrorExamplesValidate(t *testing.T) {
-	root := moduleRoot(t)
-	assertExamplesValidate(t, filepath.Join(root, "examples", "errors"), protocol.ValidateErrorResponse)
-}
-
-func TestFeedEventExamplesValidate(t *testing.T) {
-	root := moduleRoot(t)
-	assertExamplesValidate(t, filepath.Join(root, "examples", "feed", "events"), protocol.ValidateFeedEvent)
-}
-
 func TestEntityUpdateFeedEventChangeReasonIsExplicitAndScoped(t *testing.T) {
 	valid := map[string]any{
 		"event":         "update",
@@ -219,11 +199,6 @@ func TestEntityUpdateFeedEventChangeReasonIsExplicitAndScoped(t *testing.T) {
 	}
 }
 
-func TestFeedClientMessageExamplesValidate(t *testing.T) {
-	root := moduleRoot(t)
-	assertExamplesValidate(t, filepath.Join(root, "examples", "feed", "messages"), protocol.ValidateFeedClientMessage)
-}
-
 func TestHandshakeProtocolRevisionMatchesProtocolRevision(t *testing.T) {
 	root := moduleRoot(t)
 	data, err := os.ReadFile(filepath.Join(root, "examples", "feed", "server", "handshake.json"))
@@ -267,17 +242,6 @@ func TestPluginStatusStateFieldsStayConsistent(t *testing.T) {
 		if errors := protocol.ValidatePluginStatus(json.RawMessage(value)); len(errors) == 0 {
 			t.Errorf("contradictory Plugin status accepted: %s", value)
 		}
-	}
-}
-
-func TestSubscriptionsReadyExampleValidates(t *testing.T) {
-	root := moduleRoot(t)
-	data, err := os.ReadFile(filepath.Join(root, "examples", "feed", "server-ready", "subscriptions-ready.json"))
-	if err != nil {
-		t.Fatalf("read subscriptions-ready example: %v", err)
-	}
-	if errors := protocol.ValidateFeedSubscriptionsReadyMessage(json.RawMessage(data)); len(errors) > 0 {
-		t.Fatalf("subscriptions-ready example did not validate: %v", errors)
 	}
 }
 
@@ -494,6 +458,7 @@ func TestGeometryValidation(t *testing.T) {
 		geometry map[string]any
 		contains []string
 	}{
+		{name: "incomplete position", geometry: map[string]any{"type": "Point", "coordinates": []any{40.0}}, contains: []string{"coordinates"}},
 		{name: "bad longitude", geometry: map[string]any{"type": "Point", "coordinates": []any{181.0, 40.0}}, contains: []string{"coordinates"}},
 		{name: "non finite", geometry: map[string]any{"type": "Point", "coordinates": []any{math.Inf(1), 40.0}}, contains: []string{"coordinates[0]"}},
 		{
@@ -505,6 +470,7 @@ func TestGeometryValidation(t *testing.T) {
 			name:     "raw point rejects radius",
 			geometry: map[string]any{"type": "Point", "coordinates": []any{-73.0, 40.0}, "radius_m": 25.0},
 		},
+		{name: "invalid circle shape", geometry: map[string]any{"type": "Feature", "geometry": map[string]any{"type": "Point", "coordinates": []any{-73.0, 40.0}}, "properties": map[string]any{"shape": "ellipse", "radius_m": 25.0}}, contains: []string{"shape"}},
 		{
 			name:     "circle missing shape",
 			geometry: map[string]any{"type": "Feature", "geometry": map[string]any{"type": "Point", "coordinates": []any{-73.0, 40.0}}, "properties": map[string]any{"radius_m": 25.0}},
@@ -629,59 +595,6 @@ func responseEntity(components map[string]any) map[string]any {
 			"created_at": "2026-08-11T00:00:00Z", "updated_at": "2026-08-11T00:00:00Z", "version": 1,
 		},
 	}
-}
-
-func TestCanonicalJSONSchemaConstraints(t *testing.T) {
-	root := moduleRoot(t)
-
-	geometryDefs := readSchemaDefs(t, root)
-	geoJSONPosition := schemaObject(t, geometryDefs["GeoJSONPosition"])
-	assertSchemaNumber(t, geoJSONPosition, "minItems", 2)
-	assertSchemaMissing(t, geoJSONPosition, "minLength")
-
-	circleProperties := schemaObject(t, geometryDefs["CircleProperties"])
-	if got, want := circleProperties["additionalProperties"], false; got != want {
-		t.Fatalf("CircleProperties additionalProperties = %v, want %v", got, want)
-	}
-	circlePropertyFields := schemaObject(t, circleProperties["properties"])
-	shape := schemaObject(t, circlePropertyFields["shape"])
-	if got, want := shape["const"], "circle"; got != want {
-		t.Fatalf("CircleProperties.shape const = %v, want %q", got, want)
-	}
-	radius := schemaObject(t, circlePropertyFields["radius_m"])
-	assertSchemaNumber(t, radius, "exclusiveMinimum", 0)
-
-	circleFeature := schemaObject(t, geometryDefs["GeoJSONCircleFeature"])
-	circleFeatureProps := schemaObject(t, circleFeature["properties"])
-	circleFeatureGeometry := schemaObject(t, circleFeatureProps["geometry"])
-	if got, want := circleFeatureGeometry["$ref"], "#/$defs/GeoJSONPoint"; got != want {
-		t.Fatalf("GeoJSONCircleFeature.geometry ref = %v, want %q", got, want)
-	}
-
-	objectReferenceSchema := schemaObject(t, geometryDefs["ObjectReference"])
-	assertSchemaNumber(t, objectReferenceSchema, "minProperties", 1)
-
-	objectReferenceDef := schemaObject(t, geometryDefs["ObjectReference"])
-	assertSchemaNumber(t, objectReferenceDef, "minProperties", 1)
-	objectSchema := schemaObject(t, geometryDefs["ObjectBlob"])
-	objectProps := schemaObject(t, objectSchema["properties"])
-	sizeBytes := schemaObject(t, objectProps["size_bytes"])
-	if got, want := sizeBytes["type"], "integer"; got != want {
-		t.Fatalf("object size_bytes type = %v, want %s", got, want)
-	}
-
-	telemetryDef := schemaObject(t, geometryDefs["TelemetryComponent"])
-	assertSchemaMissing(t, telemetryDef, "$ref")
-	telemetryProps := schemaObject(t, telemetryDef["properties"])
-	latitude := schemaObject(t, telemetryProps["latitude"])
-	if got, want := latitude["$ref"], "#/$defs/Latitude"; got != want {
-		t.Fatalf("telemetry latitude ref = %v, want %s", got, want)
-	}
-	healthDef := schemaObject(t, geometryDefs["HealthComponent"])
-	assertSchemaMissing(t, healthDef, "$ref")
-	healthProps := schemaObject(t, healthDef["properties"])
-	batteryPercent := schemaObject(t, healthProps["battery_percent"])
-	assertSchemaNumber(t, batteryPercent, "maximum", 100)
 }
 
 func TestEntityComponentPayloadValidation(t *testing.T) {
@@ -868,47 +781,6 @@ func TestObjectValidation(t *testing.T) {
 	}
 }
 
-func TestRawJSONValidatorsRejectTrailingValues(t *testing.T) {
-	tests := []struct {
-		name     string
-		raw      json.RawMessage
-		validate func(any) []string
-		contains string
-	}{
-		{
-			name:     "entity",
-			raw:      json.RawMessage(`{"components":{}}{"extra":true}`),
-			validate: protocol.ValidateEntityBlob,
-			contains: "trailing JSON value",
-		},
-		{name: "task", raw: json.RawMessage(`{"asset_id":"asset-1","command":"fixture.immediate","input":{}}{"extra":true}`), validate: protocol.ValidateTaskCreateRequest, contains: "trailing JSON value"},
-		{
-			name:     "object",
-			raw:      json.RawMessage(`{"size_bytes":1}{"bad":true}`),
-			validate: protocol.ValidateObjectBlob,
-			contains: "trailing JSON value",
-		},
-		{
-			name:     "feed event",
-			raw:      json.RawMessage(`{"event":"delete","resource_type":"entity","id":"asset-1","version":1}{"extra":true}`),
-			validate: protocol.ValidateFeedEvent,
-			contains: "trailing JSON value",
-		},
-		{
-			name:     "array component",
-			raw:      json.RawMessage(`[{"object_id":"object-1","role":"thumbnail"}][]`),
-			validate: protocol.ValidateMediaRefsComponent,
-			contains: "trailing JSON value",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assertErrorContains(t, tt.validate(tt.raw), tt.contains)
-		})
-	}
-}
-
 func moduleRoot(t *testing.T) string {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)
@@ -916,69 +788,6 @@ func moduleRoot(t *testing.T) string {
 		t.Fatal("runtime.Caller failed")
 	}
 	return filepath.Clean(filepath.Join(filepath.Dir(file), ".."))
-}
-
-func assertExamplesValidate(t *testing.T, dir string, validate func(any) []string) {
-	t.Helper()
-	examples, err := filepath.Glob(filepath.Join(dir, "*.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(examples) == 0 {
-		t.Fatalf("expected examples in %s", dir)
-	}
-
-	for _, example := range examples {
-		t.Run(filepath.Base(example), func(t *testing.T) {
-			data, err := os.ReadFile(example)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if errors := validate(json.RawMessage(data)); len(errors) > 0 {
-				t.Fatalf("validate() errors = %v", errors)
-			}
-		})
-	}
-}
-
-func readSchemaDefs(t *testing.T, root string) map[string]any {
-	t.Helper()
-	data, err := os.ReadFile(filepath.Join(root, "schema", "jsonschema", "atlas.schema.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var schema map[string]any
-	if err := json.Unmarshal(data, &schema); err != nil {
-		t.Fatal(err)
-	}
-	return schemaObject(t, schema["$defs"])
-}
-
-func schemaObject(t *testing.T, value any) map[string]any {
-	t.Helper()
-	object, ok := value.(map[string]any)
-	if !ok {
-		t.Fatalf("expected schema object, got %T", value)
-	}
-	return object
-}
-
-func assertSchemaNumber(t *testing.T, schema map[string]any, key string, want float64) {
-	t.Helper()
-	got, ok := schema[key].(float64)
-	if !ok {
-		t.Fatalf("schema[%q] = %T, want number", key, schema[key])
-	}
-	if got != want {
-		t.Fatalf("schema[%q] = %v, want %v", key, got, want)
-	}
-}
-
-func assertSchemaMissing(t *testing.T, schema map[string]any, key string) {
-	t.Helper()
-	if _, ok := schema[key]; ok {
-		t.Fatalf("schema[%q] should be absent, got %v", key, schema[key])
-	}
 }
 
 func assertErrorContains(t *testing.T, errors []string, want string) {

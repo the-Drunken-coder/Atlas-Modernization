@@ -47,6 +47,13 @@ describe("generated request validator conformance", () => {
     });
   }
 
+  it("uses Unicode whitespace rules for non-empty strings", () => {
+    for (const entity_type of ["\u00a0", "\u1680", "\u2000", "\u2028", "\u2029", "\ufeff"]) {
+      expect(isEntityCreateRequest({ entity_id: "asset-1", entity_type })).toBe(false);
+    }
+    expect(isEntityCreateRequest({ entity_id: "asset-1", entity_type: "\u200b" })).toBe(true);
+  });
+
   it("rejects aggregate polygon position overflow in entity check-ins", () => {
     const rings = Array.from({ length: 2 }, () => Array.from({ length: 5_001 }, () => [0, 0]));
     expect(isEntityCheckInRequest({ components: { geometry: { type: "Polygon", coordinates: rings } } })).toBe(false);
@@ -56,7 +63,6 @@ describe("generated request validator conformance", () => {
     let nested: Record<string, unknown> = { leaf: true };
     for (let depth = 0; depth < 3_000; depth++) nested = { nested };
 
-    expect(() => isObjectCreateRequest({ object_id: "object-deep-json", extra: nested })).not.toThrow();
     expect(isObjectCreateRequest({ object_id: "object-deep-json", extra: nested })).toBe(true);
 
     const cycle: Record<string, unknown> = {};
