@@ -1,5 +1,5 @@
 import type { TaskResource } from "@the-drunken-coder/atlas-sdk";
-import { minimal } from "node-mavlink";
+import { common, minimal } from "node-mavlink";
 import { paramReadCommand, returnToLaunchCommand } from "./commands.js";
 import type { AssetConfig } from "./config.js";
 import type { CoreGateway } from "./core-client.js";
@@ -8,7 +8,12 @@ import { type MavLink, type ReceivedMessage } from "./mavlink-link.js";
 import { checkFlightReadiness } from "./readiness.js";
 import type { TaskEngine } from "./task-engine.js";
 import { type AuthoritativeTask } from "./task-engine.js";
-import { type VehicleSnapshot, VehicleTracker } from "./vehicle.js";
+import { hasFreshControlTelemetry, type VehicleSnapshot, VehicleTracker } from "./vehicle.js";
+
+type HeartbeatMessage = InstanceType<typeof minimal.Heartbeat>;
+type GlobalPositionMessage = InstanceType<typeof common.GlobalPositionInt>;
+type SysStatusMessage = InstanceType<typeof common.SysStatus>;
+type ParamValueMessage = InstanceType<typeof common.ParamValue>;
 
 export type { AuthoritativeTask };
 
@@ -33,8 +38,7 @@ export function flightGateOpen(snapshot: {
   // A restarted process never resumes stale airborne work: flight readiness
   // waits for confirmed landed and disarmed state.
   if (snapshot.armed) return false;
-  if (snapshot.relativeAltitudeM !== undefined && Math.abs(snapshot.relativeAltitudeM) > 0.5) return false;
-  return true;
+  return snapshot.relativeAltitudeM !== undefined && Math.abs(snapshot.relativeAltitudeM) <= 0.5;
 }
 
 export function shouldRequestCoreLossRecovery(args: {
@@ -43,17 +47,47 @@ export function shouldRequestCoreLossRecovery(args: {
   guided: boolean;
   activeCommand: "flight.takeoff" | "flight.goto" | "flight.return_to_launch" | "flight.land" | undefined;
   recoveryRunning: boolean;
+  telemetryFresh: boolean;
 }): boolean {
   if (args.recoveryRunning) return false;
   // After the grace period, request RTL while Atlas has control (Guided),
   // including idle hold. Preserve an ongoing landing or RTL. Never override
   // manual flight.
   if (args.activeCommand === "flight.land" || args.activeCommand === "flight.return_to_launch") return false;
-  if (!args.guided) return false;
+  if (!args.guided || !args.telemetryFresh) return false;
   return args.downMs >= args.graceMs;
 }
 
-const GCS_TYPE = (minimal.MavType as unknown as Record<string, number>)["GCS"] ?? 6;
+export function isConfiguredVehicleMessage(
+  config: Pick<AssetConfig, "vehicleSystemId" | "vehicleComponentId">,
+  message: Pick<ReceivedMessage, "sysid" | "compid">
+): boolean {
+  return message.sysid === config.vehicleSystemId && message.compid === config.vehicleComponentId;
+}
+
+export function flightTelemetryForCheckin(snapshot: VehicleSnapshot, nowMs: number): FlightTelemetry | undefined {
+  if (!hasFreshControlTelemetry(snapshot, nowMs)) return undefined;
+  const telemetry: FlightTelemetry = { armed: snapshot.armed };
+  if (snapshot.batteryRemainingPercent !== undefined) {
+    telemetry.batteryRemainingPercent = snapshot.batteryRemainingPercent;
+  }
+  if (snapshot.customMode !== undefined) telemetry.flightMode = snapshot.mode;
+  if (snapshot.launchElevationVerified && snapshot.launchElevationM !== undefined) {
+    telemetry.launchElevationM = snapshot.launchElevationM;
+  }
+  if (snapshot.observation !== undefined) {
+    telemetry.position = {
+      latitude: snapshot.observation.latitudeDeg,
+      longitude: snapshot.observation.longitudeDeg,
+      altitudeMslM: snapshot.observation.altitudeMslM,
+      speedMS: snapshot.observation.groundSpeedMS,
+      headingDeg: snapshot.observation.headingDeg
+    };
+  }
+  return telemetry;
+}
+
+const GCS_TYPE = minimal.MavType.GCS;
 const FS_GCS_PARAM = "FS_GCS_ENABLE";
 const PARAM_VERIFY_TIMEOUT_MS = 10_000;
 
@@ -75,6 +109,9 @@ export class AssetController {
   private ready = false;
   private gcsFailsafeChecked = false;
   private lastTasks: AuthoritativeTask[] = [];
+  private recoveryTaskToFail: string | undefined;
+  private telemetryStale = false;
+  private shutdownPromise: Promise<void> | undefined;
 
   constructor(
     private readonly config: AssetConfig,
@@ -100,19 +137,33 @@ export class AssetController {
   async start(): Promise<void> {
     this.running = true;
     this.link = await this.deps.openLink();
+    // A signal can arrive while the transport is opening, before shutdown has
+    // a link to close. Close the newly opened link instead of continuing.
+    if (!this.running) {
+      await this.link.close();
+      return;
+    }
     this.log("info", `MAVLink link open: ${this.link.describe()}`);
     this.link.onMessage((message) => {
       this.handleMessage(message);
     });
 
     await this.deps.core.begin();
+    if (!this.running) return;
     this.log("info", `Runtime registered for ${this.config.assetId}; verifying vehicle before readiness.`);
     await this.verifyGcsFailsafe();
+    if (!this.running) return;
     await this.waitForInitialState();
+    if (!this.running) return;
     await this.run();
   }
 
-  async shutdown(): Promise<void> {
+  shutdown(): Promise<void> {
+    this.shutdownPromise ??= this.performShutdown();
+    return this.shutdownPromise;
+  }
+
+  private async performShutdown(): Promise<void> {
     this.running = false;
     const snapshot = this.snapshot();
     const airborne = snapshot.armed || Math.abs(snapshot.observation?.relativeAltitudeM ?? 0) > 0.5;
@@ -121,40 +172,56 @@ export class AssetController {
     // control is preserved: exiting never interrupts those actions. The
     // runtime registration is intentionally left for the next process, whose
     // fresh identity drains stale work through the normal fencing rules.
-    if (airborne && snapshot.guided && this.link !== undefined) {
-      await this.link.send(returnToLaunchCommand(this.config.vehicleSystemId, this.config.vehicleComponentId));
-      this.log("info", "Shutdown RTL requested; awaiting mode confirmation.");
-      const deadline = this.now() + this.config.shutdownConfirmSeconds * 1000;
-      while (this.now() < deadline) {
-        if (this.snapshot().mode === "RTL") {
-          this.log("info", "Shutdown RTL confirmed.");
-          break;
+    let failed = false;
+    let failure: unknown;
+    try {
+      if (
+        airborne &&
+        snapshot.guided &&
+        hasFreshControlTelemetry(snapshot, this.now()) &&
+        this.link?.status().state === "open"
+      ) {
+        await this.link.send(returnToLaunchCommand(this.config.vehicleSystemId, this.config.vehicleComponentId));
+        this.log("info", "Shutdown RTL requested; awaiting mode confirmation.");
+        const deadline = this.now() + this.config.shutdownConfirmSeconds * 1000;
+        while (this.now() < deadline) {
+          if (this.snapshot().mode === "RTL") {
+            this.log("info", "Shutdown RTL confirmed.");
+            break;
+          }
+          await this.sleep(250);
         }
-        await this.sleep(250);
+      }
+    } catch (error) {
+      failed = true;
+      failure = error;
+    }
+    try {
+      await this.link?.close();
+    } catch (error) {
+      if (!failed) {
+        failed = true;
+        failure = error;
+      } else {
+        this.log("warn", `MAVLink close also failed: ${shortError(error)}`);
       }
     }
-    if (this.link !== undefined) {
-      await this.link.close();
-    }
     this.log("info", "Asset host stopped.");
+    if (failed) throw failure;
   }
 
   private handleMessage(message: ReceivedMessage): void {
+    if (!isConfiguredVehicleMessage(this.config, message)) return;
     const tracker = this.deps.tracker;
     const now = this.now();
     const name = (message.message.constructor as { MSG_NAME?: string }).MSG_NAME ?? "";
     switch (name) {
       case "HEARTBEAT": {
-        const heartbeat = message.message as unknown as {
-          customMode: number;
-          baseMode: number;
-          autopilot: number;
-        };
-        const type = (message.message as unknown as { type: number }).type;
+        const heartbeat = message.message as HeartbeatMessage;
         tracker.observeHeartbeat({
           systemId: message.sysid,
           componentId: message.compid,
-          vehicleType: type,
+          vehicleType: heartbeat.type,
           autopilot: heartbeat.autopilot,
           baseMode: heartbeat.baseMode,
           customMode: heartbeat.customMode,
@@ -163,16 +230,7 @@ export class AssetController {
         break;
       }
       case "GLOBAL_POSITION_INT": {
-        const position = message.message as unknown as {
-          lat: number;
-          lon: number;
-          alt: number;
-          relativeAlt: number;
-          vx: number;
-          vy: number;
-          vz: number;
-          hdg: number;
-        };
+        const position = message.message as GlobalPositionMessage;
         const speedMS = Math.hypot(position.vx / 100, position.vy / 100, position.vz / 100);
         // MAVLink uses 65535 for unknown heading; Atlas heading_deg requires [0, 360).
         const headingDeg = position.hdg === 65535 ? 0 : (position.hdg / 100) % 360;
@@ -188,12 +246,12 @@ export class AssetController {
         break;
       }
       case "SYS_STATUS": {
-        const status = message.message as unknown as { batteryRemaining: number };
+        const status = message.message as SysStatusMessage;
         tracker.observeSysStatus(status.batteryRemaining === -1 ? undefined : status.batteryRemaining);
         break;
       }
       case "PARAM_VALUE": {
-        const value = message.message as unknown as { paramId: string; paramValue: number };
+        const value = message.message as ParamValueMessage;
         if (value.paramId === FS_GCS_PARAM) {
           tracker.observeGcsFailsafe(value.paramValue !== 0);
           this.gcsFailsafeChecked = true;
@@ -208,6 +266,7 @@ export class AssetController {
     await this.link.send(paramReadCommand(this.config.vehicleSystemId, this.config.vehicleComponentId, FS_GCS_PARAM));
     const deadline = this.now() + PARAM_VERIFY_TIMEOUT_MS;
     while (!this.gcsFailsafeChecked && this.now() < deadline && this.running) {
+      this.assertLinkHealthy();
       await this.sleep(100);
     }
     if (!this.gcsFailsafeChecked) {
@@ -223,12 +282,14 @@ export class AssetController {
     // verified vehicle, and a restarted process additionally waits for landed
     // and disarmed state before any flight work.
     while (this.running) {
+      this.assertLinkHealthy();
       const snapshot = this.snapshot();
       const relativeAltitudeM = snapshot.observation?.relativeAltitudeM;
       if (
         !this.initiallyLandedAndDisarmed &&
         !snapshot.armed &&
-        (relativeAltitudeM === undefined || Math.abs(relativeAltitudeM) <= 0.5)
+        relativeAltitudeM !== undefined &&
+        Math.abs(relativeAltitudeM) <= 0.5
       ) {
         this.initiallyLandedAndDisarmed = true;
       }
@@ -261,8 +322,8 @@ export class AssetController {
     let lastHeartbeat = 0;
     let lastPoll = 0;
     while (this.running) {
+      this.assertLinkHealthy();
       const now = this.now();
-      const snapshot = this.snapshot();
       if (now - lastHeartbeat >= 1000) {
         lastHeartbeat = now;
         await this.sendGcsHeartbeat();
@@ -273,12 +334,21 @@ export class AssetController {
       }
       if (now - lastTelemetry >= this.config.telemetryIntervalSeconds * 1000) {
         lastTelemetry = now;
-        await this.reportTelemetry(snapshot);
+        await this.reportTelemetry(this.snapshot());
       }
+      // Polling and check-in are network awaits. Re-read aircraft state and
+      // time so execution never acts on the pre-await authority snapshot.
+      const controlNow = this.now();
+      const controlSnapshot = this.snapshot();
       if (!this.isCoreDown()) {
-        await this.deps.engine.ingest(this.lastTasks, snapshot, now);
+        try {
+          await this.deps.engine.ingest(this.lastTasks, controlSnapshot, controlNow);
+        } catch (error) {
+          if (this.coreDownSince === undefined) this.coreDownSince = controlNow;
+          this.log("warn", `Task reconciliation paused after an execution report failed: ${shortError(error)}`);
+        }
       } else {
-        await this.watchCoreLossRecovery(snapshot, now);
+        await this.watchCoreLossRecovery(controlSnapshot, controlNow);
       }
       await this.sleep(100);
     }
@@ -287,11 +357,11 @@ export class AssetController {
   private async sendGcsHeartbeat(): Promise<void> {
     if (this.link === undefined) return;
     const heartbeat = new minimal.Heartbeat();
-    heartbeat.type = GCS_TYPE as never;
-    heartbeat.autopilot = 0 as never;
+    heartbeat.type = GCS_TYPE;
+    heartbeat.autopilot = 0;
     heartbeat.baseMode = 0 as never;
     heartbeat.customMode = 0;
-    heartbeat.systemStatus = 0 as never;
+    heartbeat.systemStatus = 0;
     heartbeat.mavlinkVersion = 3;
     try {
       await this.link.send(heartbeat);
@@ -303,17 +373,13 @@ export class AssetController {
   private async pollCore(now: number): Promise<void> {
     try {
       const tasks = await this.deps.core.fetchTasks();
-      const activeId = this.deps.engine.activeTaskId();
-      if (activeId !== undefined && !tasks.some((task) => task.task_id === activeId)) {
-        try {
-          tasks.push(await this.deps.core.getTask(activeId));
-        } catch (error) {
-          this.log("warn", `Could not refresh active Task ${activeId}: ${shortError(error)}`);
-        }
+      const reconciliationTaskId = this.deps.engine.reconciliationTaskId() ?? this.recoveryTaskToFail;
+      if (reconciliationTaskId !== undefined && !tasks.some((task) => task.task_id === reconciliationTaskId)) {
+        tasks.push(await this.deps.core.getTask(reconciliationTaskId));
       }
       if (this.coreDownSince !== undefined) {
         this.log("info", "Core reachable again; reconciling authoritative state before continuing.");
-        await this.reconcileAfterReconnect(tasks, now);
+        await this.reconcileAfterReconnect(tasks);
       }
       this.lastTasks = toAuthoritative(tasks);
       this.coreDownSince = undefined;
@@ -325,29 +391,32 @@ export class AssetController {
     }
   }
 
-  private async reconcileAfterReconnect(tasks: TaskResource[], _now: number): Promise<void> {
+  private async reconcileAfterReconnect(tasks: TaskResource[]): Promise<void> {
     // The engine reconciles against the fresh authoritative list on its next
     // ingest. When recovery RTL already runs, reconnection leaves recovery
     // running: the interrupted action is finished locally and reported now,
     // never resumed.
     if (this.coreLossRecovery) {
-      const abandoned = this.deps.engine.abandonActiveForRecovery();
-      if (abandoned !== undefined) {
-        try {
+      this.recoveryTaskToFail ??= this.deps.engine.abandonActiveForRecovery();
+      if (this.recoveryTaskToFail !== undefined) {
+        const recoveryTask = tasks.find((task) => task.task_id === this.recoveryTaskToFail);
+        if (
+          recoveryTask?.status !== "completed" &&
+          recoveryTask?.status !== "failed" &&
+          recoveryTask?.status !== "cancelled"
+        ) {
           await this.deps.core.reportFail(
-            abandoned,
+            this.recoveryTaskToFail,
             "execution_failed",
             "Core link lost; recovery RTL started and the interrupted action was not resumed."
           );
-        } catch (error) {
-          this.log("warn", `Could not report interrupted task: ${shortError(error)}`);
         }
+        this.recoveryTaskToFail = undefined;
       } else {
         this.log("info", "Recovery RTL already runs; the interrupted action is not resumed.");
       }
       this.coreLossRecovery = false;
     }
-    void tasks;
   }
 
   private async watchCoreLossRecovery(snapshot: VehicleSnapshot, now: number): Promise<void> {
@@ -357,7 +426,8 @@ export class AssetController {
       graceMs: this.config.coreLossGraceSeconds * 1000,
       guided: snapshot.guided,
       activeCommand: this.deps.engine.activeCommand(),
-      recoveryRunning: this.coreLossRecovery
+      recoveryRunning: this.coreLossRecovery,
+      telemetryFresh: hasFreshControlTelemetry(snapshot, now)
     });
     if (!shouldRecover || this.link === undefined) return;
     try {
@@ -371,19 +441,17 @@ export class AssetController {
   }
 
   private async reportTelemetry(snapshot: VehicleSnapshot): Promise<void> {
-    const telemetry: FlightTelemetry = { armed: snapshot.armed };
-    if (snapshot.customMode !== undefined) telemetry.flightMode = snapshot.mode;
-    if (snapshot.launchElevationVerified && snapshot.launchElevationM !== undefined) {
-      telemetry.launchElevationM = snapshot.launchElevationM;
+    const telemetry = flightTelemetryForCheckin(snapshot, this.now());
+    if (telemetry === undefined) {
+      if (!this.telemetryStale) {
+        this.telemetryStale = true;
+        this.log("warn", "Aircraft control telemetry is stale; Core check-ins are paused until MAVLink recovers.");
+      }
+      return;
     }
-    if (snapshot.observation !== undefined) {
-      telemetry.position = {
-        latitude: snapshot.observation.latitudeDeg,
-        longitude: snapshot.observation.longitudeDeg,
-        altitudeMslM: snapshot.observation.altitudeMslM,
-        speedMS: snapshot.observation.groundSpeedMS,
-        headingDeg: snapshot.observation.headingDeg
-      };
+    if (this.telemetryStale) {
+      this.telemetryStale = false;
+      this.log("info", "Aircraft control telemetry is fresh again; Core check-ins resumed.");
     }
     try {
       await this.deps.core.checkin(telemetry);
@@ -393,6 +461,12 @@ export class AssetController {
       }
       this.log("warn", `Telemetry check-in failed: ${shortError(error)}`);
     }
+  }
+
+  private assertLinkHealthy(): void {
+    const status = this.link?.status();
+    if (status?.state === "failed") throw status.error;
+    if (status?.state === "closed") throw new Error("MAVLink link closed while the Asset host was running.");
   }
 }
 

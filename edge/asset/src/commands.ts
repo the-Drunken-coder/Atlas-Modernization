@@ -8,27 +8,16 @@ type ParamReadMessage = InstanceType<typeof common.ParamRequestRead>;
 // installed node-mavlink mappings (CommandLong params carry a leading
 // underscore; GlobalPositionInt lives in the common dialect).
 
-const MAV_CMD_TABLE = common.MavCmd as unknown as Record<string, number>;
-const COPTER_MODE_TABLE = ardupilotmega.CopterMode as unknown as Record<string, number>;
-const MAV_FRAME_TABLE = common.MavFrame as unknown as Record<string, number>;
-const MAV_RESULT_TABLE = common.MavResult as unknown as Record<string, number>;
+const MAV_CMD_NAV_TAKEOFF = common.MavCmd.NAV_TAKEOFF;
+const MAV_CMD_NAV_RETURN_TO_LAUNCH = common.MavCmd.NAV_RETURN_TO_LAUNCH;
+const MAV_CMD_NAV_LAND = common.MavCmd.NAV_LAND;
+const MAV_CMD_DO_SET_MODE = common.MavCmd.DO_SET_MODE;
+const MAV_FRAME_GLOBAL_INT = common.MavFrame.GLOBAL_INT;
+const COPTER_MODE_GUIDED = ardupilotmega.CopterMode.GUIDED;
+const COPTER_MODE_RTL = ardupilotmega.CopterMode.RTL;
+const COPTER_MODE_LAND = ardupilotmega.CopterMode.LAND;
 
-function lookup(table: Record<string, number>, key: string): number {
-  const value = table[key];
-  if (value === undefined) throw new Error(`Missing MAVLink constant ${key}`);
-  return value;
-}
-
-const MAV_CMD_NAV_TAKEOFF = lookup(MAV_CMD_TABLE, "NAV_TAKEOFF");
-const MAV_CMD_NAV_RETURN_TO_LAUNCH = lookup(MAV_CMD_TABLE, "NAV_RETURN_TO_LAUNCH");
-const MAV_CMD_NAV_LAND = lookup(MAV_CMD_TABLE, "NAV_LAND");
-const MAV_CMD_DO_SET_MODE = lookup(MAV_CMD_TABLE, "DO_SET_MODE");
-const MAV_FRAME_GLOBAL_INT = lookup(MAV_FRAME_TABLE, "GLOBAL_INT");
-const COPTER_MODE_GUIDED = lookup(COPTER_MODE_TABLE, "GUIDED");
-const COPTER_MODE_RTL = lookup(COPTER_MODE_TABLE, "RTL");
-const COPTER_MODE_LAND = lookup(COPTER_MODE_TABLE, "LAND");
-
-export const MAV_RESULT_ACCEPTED = lookup(MAV_RESULT_TABLE, "ACCEPTED");
+export const MAV_RESULT_ACCEPTED = common.MavResult.ACCEPTED;
 
 export function commandAckAccepted(result: number): boolean {
   return result === MAV_RESULT_ACCEPTED;
@@ -110,7 +99,7 @@ function positionTarget(
   message.timeBootMs = 0;
   message.targetSystem = targetSystem;
   message.targetComponent = targetComponent;
-  message.coordinateFrame = MAV_FRAME_GLOBAL_INT as never;
+  message.coordinateFrame = MAV_FRAME_GLOBAL_INT;
   message.typeMask = typeMask;
   message.latInt = Math.round(latitudeDeg * 1e7);
   message.lonInt = Math.round(longitudeDeg * 1e7);

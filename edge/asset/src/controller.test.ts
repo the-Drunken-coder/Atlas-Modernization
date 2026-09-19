@@ -2,7 +2,13 @@ import type { TaskResource } from "@the-drunken-coder/atlas-sdk";
 import type { MavLinkData } from "node-mavlink";
 import { describe, expect, it } from "vitest";
 import type { AssetConfig } from "./config.js";
-import { AssetController, flightGateOpen, shouldRequestCoreLossRecovery } from "./controller.js";
+import {
+  AssetController,
+  flightGateOpen,
+  flightTelemetryForCheckin,
+  isConfiguredVehicleMessage,
+  shouldRequestCoreLossRecovery
+} from "./controller.js";
 import { type CoreGateway, type FlightTelemetry } from "./core-client.js";
 import type { MavLink } from "./mavlink-link.js";
 import { TaskEngine } from "./task-engine.js";
@@ -37,12 +43,19 @@ describe("recovery decisions", () => {
   it("withholds flight work after restart until landed and disarmed", () => {
     expect(flightGateOpen({ initiallyLandedAndDisarmed: false, armed: true })).toBe(false);
     expect(flightGateOpen({ initiallyLandedAndDisarmed: false, armed: false, relativeAltitudeM: 12 })).toBe(false);
+    expect(flightGateOpen({ initiallyLandedAndDisarmed: false, armed: false })).toBe(false);
     expect(flightGateOpen({ initiallyLandedAndDisarmed: false, armed: false, relativeAltitudeM: 0 })).toBe(true);
     expect(flightGateOpen({ initiallyLandedAndDisarmed: true, armed: true, relativeAltitudeM: 12 })).toBe(true);
   });
 
   it("requests Core-loss RTL while Guided, including idle hold", () => {
-    const base = { downMs: 6000, graceMs: 5000, guided: true, recoveryRunning: false } as const;
+    const base = {
+      downMs: 6000,
+      graceMs: 5000,
+      guided: true,
+      recoveryRunning: false,
+      telemetryFresh: true
+    } as const;
     expect(shouldRequestCoreLossRecovery({ ...base, activeCommand: "flight.takeoff" })).toBe(true);
     expect(shouldRequestCoreLossRecovery({ ...base, activeCommand: "flight.goto" })).toBe(true);
     expect(shouldRequestCoreLossRecovery({ ...base, activeCommand: undefined })).toBe(true);
@@ -52,18 +65,102 @@ describe("recovery decisions", () => {
     // Never overrides manual flight or repeats recovery.
     expect(shouldRequestCoreLossRecovery({ ...base, activeCommand: "flight.goto", guided: false })).toBe(false);
     expect(shouldRequestCoreLossRecovery({ ...base, activeCommand: "flight.goto", recoveryRunning: true })).toBe(false);
+    expect(shouldRequestCoreLossRecovery({ ...base, activeCommand: "flight.goto", telemetryFresh: false })).toBe(false);
     // Grace period first.
     expect(shouldRequestCoreLossRecovery({ ...base, downMs: 1000, activeCommand: "flight.goto" })).toBe(false);
+  });
+
+  it("ignores MAVLink messages from every source except the configured vehicle", () => {
+    expect(isConfiguredVehicleMessage(config, { sysid: 1, compid: 1 })).toBe(true);
+    expect(isConfiguredVehicleMessage(config, { sysid: 2, compid: 1 })).toBe(false);
+    expect(isConfiguredVehicleMessage(config, { sysid: 1, compid: 2 })).toBe(false);
+  });
+
+  it("publishes battery with fresh control telemetry and withholds stale aircraft state", () => {
+    const tracker = new VehicleTracker();
+    tracker.observeHeartbeat({
+      systemId: 1,
+      componentId: 1,
+      vehicleType: 2,
+      autopilot: 3,
+      baseMode: 128,
+      customMode: 4,
+      receivedAtMs: 10_000
+    });
+    tracker.observePosition({
+      latitudeDeg: 42.274,
+      longitudeDeg: -71.806,
+      altitudeMslM: 152,
+      relativeAltitudeM: 12,
+      groundSpeedMS: 3,
+      headingDeg: 90,
+      observedAtMs: 10_000
+    });
+    tracker.observeSysStatus(74);
+
+    expect(flightTelemetryForCheckin(tracker.getSnapshot(), 10_500)).toMatchObject({
+      batteryRemainingPercent: 74,
+      position: { latitude: 42.274, longitude: -71.806 }
+    });
+    expect(flightTelemetryForCheckin(tracker.getSnapshot(), 13_001)).toBeUndefined();
   });
 });
 
 describe("AssetController Core-loss recovery", () => {
+  it("surfaces a retained link failure during startup and closes the link once", async () => {
+    const linkFailure = new Error("MAVLink TCP stream failed: connection reset");
+    let linkStatus: ReturnType<MavLink["status"]> = { state: "open" };
+    let closeCalls = 0;
+    const link = {
+      describe: () => "fake",
+      status: () => linkStatus,
+      send: async () => {
+        linkStatus = { state: "failed", error: linkFailure };
+      },
+      close: async () => {
+        closeCalls++;
+        linkStatus = { state: "closed" };
+      },
+      onMessage: () => () => {}
+    } as unknown as MavLink;
+    const tracker = new VehicleTracker();
+    const core: CoreGateway = {
+      begin: async () => {},
+      ready: async () => {},
+      fetchTasks: async () => [],
+      getTask: async () => {
+        throw new Error("unexpected Task read");
+      },
+      reportStart: async () => {},
+      reportProgress: async () => {},
+      reportComplete: async () => {},
+      reportFail: async () => {},
+      checkin: async () => {}
+    };
+    const engine = new TaskEngine({ send: (item) => link.send(item) }, core, config, () => ({
+      snapshot: tracker.getSnapshot(),
+      nowMs: Date.now()
+    }));
+    const controller = new AssetController(config, {
+      openLink: async () => link,
+      core,
+      engine,
+      tracker
+    });
+
+    await expect(controller.start()).rejects.toBe(linkFailure);
+    await Promise.all([controller.shutdown(), controller.shutdown()]);
+    expect(closeCalls).toBe(1);
+  });
+
   it("requests RTL after the grace period and never resumes the interrupted action", async () => {
     let now = 1_000_000;
     const sent: MavLinkData[] = [];
     const failed: { taskId: string; code: string; message: string }[] = [];
     const started: string[] = [];
     let coreDown = false;
+    let activeRefreshDown = false;
+    let activeRefreshAttempts = 0;
     let readyCalls = 0;
     const tasks: TaskResource[] = [];
 
@@ -77,6 +174,8 @@ describe("AssetController Core-loss recovery", () => {
         return tasks.filter((task) => task.status === "pending");
       },
       getTask: async (taskId) => {
+        activeRefreshAttempts++;
+        if (activeRefreshDown) throw new Error("active Task read failed");
         const task = tasks.find((candidate) => candidate.task_id === taskId);
         if (task === undefined) throw new Error(`task ${taskId} not found`);
         return task;
@@ -98,6 +197,7 @@ describe("AssetController Core-loss recovery", () => {
     const link = {
       sent,
       describe: () => "fake",
+      status: () => ({ state: "open" }),
       send: async (message: MavLinkData) => {
         sent.push(message);
       },
@@ -117,7 +217,8 @@ describe("AssetController Core-loss recovery", () => {
         reportComplete: (taskId) => core.reportComplete(taskId),
         reportFail: (taskId, code, message) => core.reportFail(taskId, code, message)
       },
-      config
+      config,
+      () => ({ snapshot: tracker.getSnapshot(), nowMs: now })
     );
     const logs: string[] = [];
     const controller = new AssetController(config, {
@@ -220,6 +321,8 @@ describe("AssetController Core-loss recovery", () => {
 
     // Core returns with the interrupted takeoff still open: it is failed, and
     // the action is never resumed even though Guided control continues.
+    const refreshAttemptsBeforeRecovery = activeRefreshAttempts;
+    activeRefreshDown = true;
     coreDown = false;
     tasks.length = 0;
     tasks.push({
@@ -231,6 +334,17 @@ describe("AssetController Core-loss recovery", () => {
       created_at: new Date(now).toISOString(),
       updated_at: new Date(now).toISOString()
     } as unknown as TaskResource);
+    const refreshDeadline = Date.now() + 15_000;
+    while (activeRefreshAttempts === refreshAttemptsBeforeRecovery) {
+      if (Date.now() > refreshDeadline) throw new Error("timed out waiting for failed active Task refresh");
+      heartbeat(true, 4);
+      position(560, 8);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(controller.isCoreDown()).toBe(true);
+    expect(failed).toEqual([]);
+
+    activeRefreshDown = false;
     await waitFor(() => failed.some((entry) => entry.taskId === "task-takeoff"), "interrupted task failure", true);
     const failure = failed.find((entry) => entry.taskId === "task-takeoff");
     expect(failure?.message).toMatch(/not resumed/);

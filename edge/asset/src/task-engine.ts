@@ -7,7 +7,7 @@ import {
   takeoffCommand
 } from "./commands.js";
 import type { AssetConfig } from "./config.js";
-import type { VehicleSnapshot } from "./vehicle.js";
+import { hasFreshControlTelemetry, type VehicleSnapshot } from "./vehicle.js";
 
 export type FlightCommand = "flight.takeoff" | "flight.goto" | "flight.return_to_launch" | "flight.land";
 
@@ -32,6 +32,11 @@ export type CommandSender = {
   send(message: MavLinkData): Promise<void>;
 };
 
+export type ControlState = {
+  snapshot: VehicleSnapshot;
+  nowMs: number;
+};
+
 export function isFlightCommand(command: string): command is FlightCommand {
   return (
     command === "flight.takeoff" ||
@@ -50,6 +55,10 @@ type ActiveExecution = {
   settleSinceMs?: number;
   expectedModes: string[];
 };
+
+type PendingTerminalReport =
+  | { taskId: string; outcome: "complete" }
+  | { taskId: string; outcome: "fail"; code: FailureCode; message: string };
 
 export function haversineM(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
@@ -76,12 +85,15 @@ export class TaskEngine {
   private active: ActiveExecution | undefined;
   private finished = new Set<string>();
   private reholdOnGuided = false;
+  private holdRequiredBeforeMovement = false;
+  private pendingTerminalReport: PendingTerminalReport | undefined;
   private lastMode: string | undefined;
 
   constructor(
     private readonly sender: CommandSender,
     private readonly callbacks: EngineCallbacks,
-    private readonly config: AssetConfig
+    private readonly config: AssetConfig,
+    private readonly getControlState: () => ControlState
   ) {}
 
   hasActiveTask(): boolean {
@@ -90,6 +102,11 @@ export class TaskEngine {
 
   activeTaskId(): string | undefined {
     return this.active === undefined ? undefined : this.active.task.taskId;
+  }
+
+  /** Task whose authoritative state must be refreshed after Core reconnects. */
+  reconciliationTaskId(): string | undefined {
+    return this.pendingTerminalReport?.taskId ?? this.active?.task.taskId;
   }
 
   activeCommand(): FlightCommand | undefined {
@@ -103,13 +120,30 @@ export class TaskEngine {
 
   /** Reconcile with authoritative Core state, then advance the active task. */
   async ingest(tasks: AuthoritativeTask[], snapshot: VehicleSnapshot, nowMs: number): Promise<void> {
-    await this.observeMode(snapshot, nowMs);
-    await this.rejectGotoDuringTakeoff(tasks);
-    this.reconcileAuthoritative(tasks, snapshot, nowMs);
-    if (this.active === undefined) {
-      await this.adoptNext(tasks, snapshot, nowMs);
+    let current = { snapshot, nowMs };
+    this.reconcileAuthoritative(tasks);
+    if (this.pendingTerminalReport !== undefined) await this.flushTerminalReport();
+    await this.observeMode(snapshot);
+    if (this.reholdOnGuided) {
+      if (!snapshot.guided) {
+        await this.rejectPendingOutsideGuided(tasks, snapshot, nowMs);
+        return;
+      }
+      if (!(await this.establishHold(snapshot, nowMs))) return;
+      current = this.getControlState();
+      this.reholdOnGuided = false;
     }
-    await this.advance(snapshot, nowMs);
+    await this.rejectGotoDuringTakeoff(tasks);
+    if (this.holdRequiredBeforeMovement) {
+      current = this.getControlState();
+      if (!(await this.establishHold(current.snapshot, current.nowMs))) return;
+      current = this.getControlState();
+      this.holdRequiredBeforeMovement = false;
+    }
+    if (this.active === undefined) {
+      current = (await this.adoptNext(tasks, current.snapshot, current.nowMs)) ?? current;
+    }
+    await this.advance(current.snapshot, current.nowMs);
   }
 
   /** Pilot took the aircraft out of Guided; fail the interrupted task. */
@@ -120,18 +154,18 @@ export class TaskEngine {
     this.active = undefined;
     this.finished.add(taskId);
     this.reholdOnGuided = true;
-    await this.callbacks.reportFail(
+    await this.reportTerminal({
       taskId,
-      "execution_failed",
-      `Pilot takeover to ${mode}; Atlas no longer has control.`
-    );
+      outcome: "fail",
+      code: "execution_failed",
+      message: `Pilot takeover to ${mode}; Atlas no longer has control.`
+    });
   }
 
   /** Returning to Guided holds the new position; old intent never resumes. */
   async noteGuidedReturn(snapshot: VehicleSnapshot, nowMs: number): Promise<void> {
     if (!this.reholdOnGuided) return;
-    this.reholdOnGuided = false;
-    await this.establishHold(snapshot, nowMs);
+    if (await this.establishHold(snapshot, nowMs)) this.reholdOnGuided = false;
   }
 
   /**
@@ -147,15 +181,21 @@ export class TaskEngine {
     return taskId;
   }
 
-  private async observeMode(snapshot: VehicleSnapshot, nowMs: number): Promise<void> {
+  private async observeMode(snapshot: VehicleSnapshot): Promise<void> {
     const mode = snapshot.customMode === undefined ? undefined : snapshot.mode;
     if (mode === undefined || mode === this.lastMode) return;
-    const wasGuided = this.lastMode === "GUIDED";
+    const previousMode = this.lastMode;
     this.lastMode = mode;
-    if (wasGuided && mode !== "GUIDED") {
+    const active = this.active;
+    if (
+      active !== undefined &&
+      previousMode !== undefined &&
+      active.expectedModes.includes(previousMode) &&
+      !active.expectedModes.includes(mode)
+    ) {
       await this.noteTakeover(mode);
-    } else if (!wasGuided && mode === "GUIDED") {
-      await this.noteGuidedReturn(snapshot, nowMs);
+    } else if (previousMode === "GUIDED" && mode !== "GUIDED") {
+      await this.noteTakeover(mode);
     }
   }
 
@@ -169,13 +209,51 @@ export class TaskEngine {
         !this.finished.has(task.taskId)
       ) {
         this.finished.add(task.taskId);
-        await this.callbacks.reportFail(task.taskId, "precondition_failed", "Go-to during takeoff is rejected.");
+        await this.reportTerminal({
+          taskId: task.taskId,
+          outcome: "fail",
+          code: "precondition_failed",
+          message: "Go-to during takeoff is rejected."
+        });
       }
     }
   }
 
-  private reconcileAuthoritative(tasks: AuthoritativeTask[], snapshot: VehicleSnapshot, nowMs: number): void {
+  private async rejectPendingOutsideGuided(
+    tasks: AuthoritativeTask[],
+    snapshot: VehicleSnapshot,
+    nowMs: number
+  ): Promise<void> {
+    for (const task of tasks) {
+      if (
+        !isFlightCommand(task.command) ||
+        (task.status !== "pending" && task.status !== "acknowledged") ||
+        this.finished.has(task.taskId)
+      ) {
+        continue;
+      }
+      this.finished.add(task.taskId);
+      await this.reportTerminal({
+        taskId: task.taskId,
+        outcome: "fail",
+        code: "precondition_failed",
+        message: this.preconditions(task, snapshot, nowMs).join(" ")
+      });
+    }
+  }
+
+  private reconcileAuthoritative(tasks: AuthoritativeTask[]): void {
     const byId = new Map(tasks.map((task) => [task.taskId, task]));
+    if (this.pendingTerminalReport !== undefined) {
+      const authoritative = byId.get(this.pendingTerminalReport.taskId);
+      if (
+        authoritative?.status === "completed" ||
+        authoritative?.status === "failed" ||
+        authoritative?.status === "cancelled"
+      ) {
+        this.pendingTerminalReport = undefined;
+      }
+    }
     if (this.active !== undefined) {
       const authoritative = byId.get(this.active.task.taskId);
       if (authoritative === undefined) {
@@ -188,10 +266,15 @@ export class TaskEngine {
         authoritative.status === "cancelled"
       ) {
         const taskId = authoritative.taskId;
+        const command = this.active.task.command;
         this.active = undefined;
         this.finished.add(taskId);
-        if (authoritative.status === "cancelled" && authoritative.cancellationCode === "requested") {
-          void this.establishHold(snapshot, nowMs);
+        if (
+          authoritative.status === "cancelled" &&
+          authoritative.cancellationCode === "requested" &&
+          command === "flight.goto"
+        ) {
+          this.holdRequiredBeforeMovement = true;
         }
       } else {
         this.active.task = authoritative;
@@ -204,32 +287,83 @@ export class TaskEngine {
     }
   }
 
-  private async adoptNext(tasks: AuthoritativeTask[], snapshot: VehicleSnapshot, nowMs: number): Promise<void> {
+  private async adoptNext(
+    tasks: AuthoritativeTask[],
+    snapshot: VehicleSnapshot,
+    nowMs: number
+  ): Promise<ControlState | undefined> {
     // Delivery arrives in tasking order; the first actionable Task wins.
     // There is no queue: anything not adopted now is re-evaluated next tick.
     const candidate = tasks
       .filter((task) => isFlightCommand(task.command))
       .filter((task) => task.status === "pending" || task.status === "acknowledged")
       .filter((task) => !this.finished.has(task.taskId))[0];
-    if (candidate === undefined) return;
+    if (candidate === undefined) return undefined;
     const problems = this.preconditions(candidate, snapshot, nowMs);
     if (problems.length > 0) {
       this.finished.add(candidate.taskId);
-      await this.callbacks.reportFail(candidate.taskId, "precondition_failed", problems.join(" "));
-      return;
+      await this.reportTerminal({
+        taskId: candidate.taskId,
+        outcome: "fail",
+        code: "precondition_failed",
+        message: problems.join(" ")
+      });
+      return undefined;
     }
-    await this.dispatch(candidate, snapshot);
-    const remaining = this.remaining(candidate, snapshot);
+    try {
+      await this.callbacks.reportStart(candidate.taskId);
+    } catch (error) {
+      this.finished.add(candidate.taskId);
+      this.pendingTerminalReport = {
+        taskId: candidate.taskId,
+        outcome: "fail",
+        code: "execution_failed",
+        message: "Task start could not be confirmed; no aircraft command was sent."
+      };
+      throw error;
+    }
+    let current: ControlState;
+    try {
+      current = this.getControlState();
+    } catch (error) {
+      this.finished.add(candidate.taskId);
+      throw error;
+    }
+    const currentProblems = this.preconditions(candidate, current.snapshot, current.nowMs);
+    if (currentProblems.length > 0) {
+      this.finished.add(candidate.taskId);
+      await this.reportTerminal({
+        taskId: candidate.taskId,
+        outcome: "fail",
+        code: "precondition_failed",
+        message: currentProblems.join(" ")
+      });
+      return current;
+    }
+    const remaining = this.remaining(candidate, current.snapshot);
     const execution: ActiveExecution = {
       task: candidate,
-      startedAtMs: nowMs,
-      lastProgressAtMs: nowMs,
+      startedAtMs: current.nowMs,
+      lastProgressAtMs: current.nowMs,
       bestRemainingM: remaining ?? Number.POSITIVE_INFINITY,
       expectedModes: expectedModesFor(candidate.command as FlightCommand)
     };
     if (remaining !== undefined) execution.startRemainingM = remaining;
     this.active = execution;
-    await this.callbacks.reportStart(candidate.taskId);
+    try {
+      await this.dispatch(candidate, current.snapshot);
+    } catch (error) {
+      this.active = undefined;
+      this.finished.add(candidate.taskId);
+      const message = error instanceof Error ? error.message : String(error);
+      await this.reportTerminal({
+        taskId: candidate.taskId,
+        outcome: "fail",
+        code: "execution_failed",
+        message: `Failed to send flight command: ${message}`
+      });
+    }
+    return current;
   }
 
   private preconditions(task: AuthoritativeTask, snapshot: VehicleSnapshot, nowMs: number): string[] {
@@ -246,8 +380,8 @@ export class TaskEngine {
     ) {
       problems.push("Connected vehicle does not match the configured vehicle identity.");
     }
-    if (snapshot.observation === undefined || nowMs - snapshot.observation.observedAtMs > 10_000) {
-      problems.push("Requires fresh telemetry; observations are stale.");
+    if (!hasFreshControlTelemetry(snapshot, nowMs)) {
+      problems.push("Requires fresh telemetry; heartbeat or position observations are stale.");
     }
     if (task.command === "flight.takeoff") {
       if (!snapshot.armed) problems.push("Takeoff requires an already-armed aircraft; Atlas never arms.");
@@ -340,7 +474,7 @@ export class TaskEngine {
       return;
     }
     const remaining = this.remaining(active.task, snapshot);
-    if (remaining !== undefined && remaining < active.bestRemainingM) {
+    if (hasFreshControlTelemetry(snapshot, nowMs) && remaining !== undefined && remaining < active.bestRemainingM) {
       active.bestRemainingM = remaining;
       active.lastProgressAtMs = nowMs;
     } else if (nowMs - active.lastProgressAtMs > this.config.progressTimeoutSeconds * 1000) {
@@ -356,17 +490,22 @@ export class TaskEngine {
       const taskId = active.task.taskId;
       this.active = undefined;
       this.finished.add(taskId);
-      await this.callbacks.reportComplete(taskId);
+      await this.reportTerminal({ taskId, outcome: "complete" });
     }
   }
 
   private isComplete(active: ActiveExecution, snapshot: VehicleSnapshot, nowMs: number): boolean {
+    if (!hasFreshControlTelemetry(snapshot, nowMs)) return false;
     const observation = snapshot.observation;
     if (active.task.command === "flight.takeoff") {
       if (observation === undefined) return false;
       const target = numberInput(active.task.input, "altitude_m");
       if (target === undefined) return false;
-      const arrived = Math.abs(target - observation.altitudeMslM) <= this.config.altitudeToleranceM && snapshot.armed;
+      const arrived =
+        snapshot.guided &&
+        snapshot.armed &&
+        Math.abs(target - observation.altitudeMslM) <= this.config.altitudeToleranceM &&
+        observation.groundSpeedMS <= 0.5;
       if (!arrived) {
         delete active.settleSinceMs;
         return false;
@@ -387,7 +526,18 @@ export class TaskEngine {
     }
     if (active.task.command === "flight.return_to_launch" || active.task.command === "flight.land") {
       if (observation === undefined) return false;
-      return !snapshot.armed && Math.abs(observation.relativeAltitudeM) <= 0.3;
+      const landed = !snapshot.armed && Math.abs(observation.relativeAltitudeM) <= 0.3;
+      if (!landed) return false;
+      if (active.task.command === "flight.land") return true;
+      if (snapshot.launchLatitudeDeg === undefined || snapshot.launchLongitudeDeg === undefined) return false;
+      return (
+        haversineM(
+          observation.latitudeDeg,
+          observation.longitudeDeg,
+          snapshot.launchLatitudeDeg,
+          snapshot.launchLongitudeDeg
+        ) <= this.config.arrivalRadiusM
+      );
     }
     return false;
   }
@@ -404,25 +554,46 @@ export class TaskEngine {
     const command = active.task.command;
     this.active = undefined;
     this.finished.add(taskId);
+    this.pendingTerminalReport = { taskId, outcome: "fail", code, message };
     // Action-specific recovery: a failed go-to holds while Guided with usable
     // telemetry; a failed takeoff requests Land while Guided and airborne. A
     // failed RTL or Land leaves the autopilot recovery running.
-    if ((command === "flight.goto" || command === "flight.takeoff") && snapshot.guided && snapshot.armed) {
+    if (
+      (command === "flight.goto" || command === "flight.takeoff") &&
+      snapshot.guided &&
+      snapshot.armed &&
+      hasFreshControlTelemetry(snapshot, nowMs)
+    ) {
       if (command === "flight.goto") {
         await this.establishHold(snapshot, nowMs);
       } else if (snapshot.observation !== undefined && Math.abs(snapshot.observation.relativeAltitudeM) > 0.5) {
         await this.sender.send(landCommand(this.config.vehicleSystemId, this.config.vehicleComponentId));
       }
     }
-    await this.callbacks.reportFail(taskId, code, message);
+    await this.flushTerminalReport();
   }
 
-  private async establishHold(snapshot: VehicleSnapshot, nowMs: number): Promise<void> {
+  private async reportTerminal(report: PendingTerminalReport): Promise<void> {
+    this.pendingTerminalReport = report;
+    await this.flushTerminalReport();
+  }
+
+  private async flushTerminalReport(): Promise<void> {
+    const report = this.pendingTerminalReport;
+    if (report === undefined) return;
+    if (report.outcome === "complete") {
+      await this.callbacks.reportComplete(report.taskId);
+    } else {
+      await this.callbacks.reportFail(report.taskId, report.code, report.message);
+    }
+    if (this.pendingTerminalReport === report) this.pendingTerminalReport = undefined;
+  }
+
+  private async establishHold(snapshot: VehicleSnapshot, nowMs: number): Promise<boolean> {
     const observation = snapshot.observation;
     // Never send corrective commands from stale observations or without
     // authority.
-    if (observation === undefined || !snapshot.guided) return;
-    if (nowMs - observation.observedAtMs > 10_000) return;
+    if (observation === undefined || !snapshot.guided || !hasFreshControlTelemetry(snapshot, nowMs)) return false;
     await this.sender.send(
       holdPositionCommand(
         this.config.vehicleSystemId,
@@ -432,13 +603,14 @@ export class TaskEngine {
         observation.altitudeMslM
       )
     );
+    return true;
   }
 }
 
 function expectedModesFor(command: FlightCommand): string[] {
   // Native RTL and Land transitions under Atlas authority are expected, not
   // takeover. Takeoff and go-to never change the mode themselves.
-  if (command === "flight.return_to_launch") return ["GUIDED", "RTL"];
+  if (command === "flight.return_to_launch") return ["GUIDED", "RTL", "LAND"];
   if (command === "flight.land") return ["GUIDED", "LAND"];
   return ["GUIDED"];
 }

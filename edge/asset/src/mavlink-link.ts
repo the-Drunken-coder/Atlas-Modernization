@@ -40,6 +40,8 @@ export function decodePacket(packet: MavLinkPacket): ReceivedMessage | undefined
 
 export type MessageHandler = (message: ReceivedMessage) => void;
 
+export type MavLinkStatus = { state: "open" } | { state: "closed" } | { state: "failed"; error: Error };
+
 /**
  * MAVLink v2 link over any duplex byte stream (serial SiK radio or TCP for
  * simulation). The same framing and message handling serves both transports;
@@ -48,6 +50,8 @@ export type MessageHandler = (message: ReceivedMessage) => void;
 export class MavLink {
   private readonly protocol: MavLinkProtocolV2;
   private readonly handlers = new Set<MessageHandler>();
+  private closed = false;
+  private failure: Error | undefined;
 
   constructor(
     private readonly stream: Duplex,
@@ -56,7 +60,12 @@ export class MavLink {
     private readonly label: string
   ) {
     this.protocol = new MavLinkProtocolV2(sysid, compid);
+    stream.on("error", (error: Error) => this.recordFailure(error, "transport"));
+    stream.on("close", () => {
+      this.closed = true;
+    });
     const packets = createMavLinkStream(stream);
+    packets.on("error", (error: Error) => this.recordFailure(error, "packet parser"));
     packets.on("data", (packet: MavLinkPacket) => {
       let decoded: ReceivedMessage | undefined;
       try {
@@ -77,19 +86,44 @@ export class MavLink {
   }
 
   async send(message: MavLinkData): Promise<void> {
-    await sendMavlink(this.stream, message, this.protocol);
+    this.throwIfUnavailable();
+    try {
+      await sendMavlink(this.stream, message, this.protocol);
+    } catch (error) {
+      this.recordFailure(asError(error), "send");
+      this.throwIfUnavailable();
+    }
   }
 
   describe(): string {
     return this.label;
   }
 
-  async close(): Promise<void> {
-    await new Promise<void>((resolve) => {
-      this.stream.destroy();
-      resolve();
-    });
+  status(): MavLinkStatus {
+    if (this.failure !== undefined) return { state: "failed", error: this.failure };
+    if (this.closed) return { state: "closed" };
+    return { state: "open" };
   }
+
+  async close(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
+    this.stream.destroy();
+  }
+
+  private recordFailure(error: Error, source: string): void {
+    if (this.failure !== undefined) return;
+    this.failure = new Error(`MAVLink ${this.label} ${source} failed: ${error.message}`, { cause: error });
+  }
+
+  private throwIfUnavailable(): void {
+    if (this.failure !== undefined) throw this.failure;
+    if (this.closed) throw new Error(`MAVLink ${this.label} is closed`);
+  }
+}
+
+function asError(value: unknown): Error {
+  return value instanceof Error ? value : new Error(String(value));
 }
 
 /** Open the production serial SiK radio link (macOS device path). */

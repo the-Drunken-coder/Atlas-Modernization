@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emptySnapshot, VehicleTracker } from "./vehicle.js";
+import { emptySnapshot, hasFreshControlTelemetry, VehicleTracker } from "./vehicle.js";
 
 describe("VehicleTracker", () => {
   it("builds a snapshot from HEARTBEAT, GLOBAL_POSITION_INT, and SYS_STATUS", () => {
@@ -69,6 +69,8 @@ describe("VehicleTracker", () => {
     const verified = tracker.getSnapshot();
     expect(verified.launchElevationVerified).toBe(true);
     expect(verified.launchElevationM).toBeCloseTo(560.1, 5);
+    expect(verified.launchLatitudeDeg).toBeCloseTo(37.77, 5);
+    expect(verified.launchLongitudeDeg).toBeCloseTo(-122.42, 5);
 
     // Armed aircraft never retarget launch elevation.
     tracker.observeHeartbeat({
@@ -151,5 +153,48 @@ describe("VehicleTracker", () => {
     expect(tracker.getSnapshot().batteryRemainingPercent).toBeUndefined();
     tracker.observeSysStatus(55);
     expect(tracker.getSnapshot().batteryRemainingPercent).toBe(55);
+  });
+
+  it("requires both known, fresh control telemetry streams", () => {
+    const position = {
+      latitudeDeg: 0,
+      longitudeDeg: 0,
+      altitudeMslM: 0,
+      relativeAltitudeM: 0,
+      groundSpeedMS: 0,
+      headingDeg: 0,
+      observedAtMs: 0
+    };
+    expect(hasFreshControlTelemetry(emptySnapshot(), 10_000)).toBe(false);
+    expect(
+      hasFreshControlTelemetry(
+        {
+          ...emptySnapshot(),
+          lastHeartbeatMs: 7_000,
+          observation: position
+        },
+        10_000
+      )
+    ).toBe(true);
+    expect(
+      hasFreshControlTelemetry(
+        {
+          ...emptySnapshot(),
+          lastHeartbeatMs: 6_999,
+          observation: position
+        },
+        10_000
+      )
+    ).toBe(false);
+    expect(
+      hasFreshControlTelemetry(
+        {
+          ...emptySnapshot(),
+          lastHeartbeatMs: 7_001,
+          observation: position
+        },
+        10_001
+      )
+    ).toBe(false);
   });
 });

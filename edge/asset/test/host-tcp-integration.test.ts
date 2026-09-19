@@ -95,7 +95,8 @@ describe("host to aircraft over TCP MAVLink", () => {
         reportComplete: (taskId) => core.reportComplete(taskId),
         reportFail: (taskId, code, message) => core.reportFail(taskId, code, message)
       },
-      config
+      config,
+      () => ({ snapshot: tracker.getSnapshot(), nowMs: Date.now() })
     );
     const controller = new AssetController(config, {
       openLink: async () => link,

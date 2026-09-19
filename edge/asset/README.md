@@ -50,15 +50,27 @@ while running. Keep the credential-bearing file out of version control.
   The runtime registration is left for the next process, whose fresh identity
   drains stale work.
 
+## Validation boundary
+
+`npm run check --workspace @the-drunken-coder/atlas-asset` runs formatting, lint,
+type checking, unit tests, and the package build. The integration test uses an
+in-process fake ArduCopter over TCP and real MAVLink bytes. These checks cover
+host behavior, task execution, and protocol handling at the component boundary.
+
+They do not verify ArduCopter SITL, a macOS serial connection, SiK radios, a
+real aircraft, firmware behavior, hardware flight acceptance, or Safari. No
+such verification is claimed here. Real-aircraft acceptance remains
+outstanding.
+
 ## Compatibility
 
 - Transport is a serial MAVLink connection, independent of SiK radio model.
-- Target: ArduCopter stable; the exact tested release is recorded in
-  validation evidence, not assumed from the firmware metadata URL.
-- Tested versions and hardware results: simulation runs against the same
-  MAVLink handling over TCP (`transport = "tcp"`). macOS serial and aircraft
-  verification on the intended setup remain explicitly outstanding until
-  recorded here.
+- Target: ArduCopter stable. The current fake-aircraft test does not validate a
+  real ArduCopter release; record the actual firmware version when SITL or
+  hardware validation runs.
+- The checked-in integration path uses the same MAVLink handling over TCP
+  (`transport = "tcp"`) with a fake aircraft. macOS serial and aircraft
+  verification on the intended setup remain outstanding until recorded here.
 
 ## Checks
 

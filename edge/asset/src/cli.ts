@@ -51,7 +51,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       reportComplete: (taskId) => core.reportComplete(taskId),
       reportFail: (taskId, code, message) => core.reportFail(taskId, code, message)
     },
-    config
+    config,
+    () => ({ snapshot: tracker.getSnapshot(), nowMs: Date.now() })
   );
 
   let link: import("./mavlink-link.js").MavLink | undefined;
@@ -93,6 +94,14 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   } catch (error) {
     log("error", `${error instanceof Error ? error.message : String(error)}`);
     process.exitCode = 1;
+    try {
+      await controller.shutdown();
+    } catch (shutdownError) {
+      log(
+        "error",
+        `Cleanup after failure failed: ${shutdownError instanceof Error ? shutdownError.message : String(shutdownError)}`
+      );
+    }
   }
 }
 

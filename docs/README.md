@@ -31,7 +31,7 @@ Start templates: [`design-decisions/_EXAMPLE_DESIGN_DECISION_.md`](design-decisi
 | `packages/protocol/` | [`packages/protocol/README.md`](../packages/protocol/README.md) and [`docs/atlas-protocol/`](atlas-protocol/) | Buildable Atlas Protocol module: JSON Schema source, generated contracts, validators, examples, tooling, and planning/reference docs. |
 | `packages/sdk/` | [`docs/atlas-sdk/`](atlas-sdk/) | TypeScript/JavaScript Atlas SDK package: typed client, optional sync engine, CLI, package metadata, and Node/browser test suites. |
 | `packages/meshtastic-link/` | [`packages/meshtastic-link/README.md`](../packages/meshtastic-link/README.md) | Meshtastic radio transport, Shared Picture, local Link service, and deterministic packet simulation. |
-| `edge/asset/` | [`edge/asset/README.md`](../edge/asset/README.md) | Reserved Asset role. No implementation exists yet. |
+| `edge/asset/` | [`edge/asset/README.md`](../edge/asset/README.md) | TypeScript/Node.js ArduPilot Asset Host for one quadcopter over MAVLink/SiK. |
 | `edge/gateway/` | [`edge/gateway/README.md`](../edge/gateway/README.md) | Reserved Gateway role. No implementation exists yet. |
 | `edge/gateway/` | [`edge/gateway/README.md`](../edge/gateway/README.md) | Field Gateway ownership and dependency rules. No implementation exists yet. |
 | `surfaces/command-interface/` | [`surfaces/command-interface/README.md`](../surfaces/command-interface/README.md) | Atlas Command interface: Cloudflare Pages-hosted map console. |

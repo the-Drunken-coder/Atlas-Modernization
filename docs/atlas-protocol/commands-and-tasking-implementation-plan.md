@@ -2,7 +2,7 @@
 
 This is the execution companion to [Commands and Tasking](commands-and-tasking.md). That document defines the target state. This document defines how the repository reaches it.
 
-The Protocol, Core, SDK, interface, and simulation portions remain current. The former `@the-drunken-coder/atlas-asset-runtime` package was removed on 2026-08-27. Atlas does not currently ship an Asset host implementation.
+The Protocol, Core, SDK, interface, and simulation portions remain current. The former `@the-drunken-coder/atlas-asset-runtime` package was removed on 2026-08-27. Issue #455 now provides the first supported Asset host under `edge/asset`; references below to an empty production catalog or future Asset implementation are historical planning context.
 
 ## Outcome
 
@@ -270,7 +270,7 @@ Exit gate:
 
 - SDK wire tests cover every new request shape and header
 - packed consumer checks prove the public SDK exports work outside the monorepo
-- Asset execution, local scheduling, and physical safe-state acceptance remain future Asset implementation work
+- Additional Asset implementations and local scheduling variants remain future work. Physical safe-state acceptance for the ArduPilot host also remains outstanding.
 
 ### Phase 5: Command interface
 

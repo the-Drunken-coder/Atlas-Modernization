@@ -1,18 +1,12 @@
 import { ardupilotmega, minimal } from "node-mavlink";
 
-function lookup(table: unknown, key: string): number {
-  const value = (table as Record<string, number>)[key];
-  if (typeof value !== "number") throw new Error(`Missing MAVLink constant ${key}`);
-  return value;
-}
-
-export const ARDUPILOT_QUADROTOR_TYPE = lookup(minimal.MavType, "QUADROTOR");
-export const ARDUPILOT_AUTOPILOT = lookup(minimal.MavAutopilot, "ARDUPILOTMEGA");
-const ARMED_FLAG = lookup(minimal.MavModeFlag, "SAFETY_ARMED");
-const GUIDED_MODE = lookup(ardupilotmega.CopterMode, "GUIDED");
+export const ARDUPILOT_QUADROTOR_TYPE = minimal.MavType.QUADROTOR;
+export const ARDUPILOT_AUTOPILOT = minimal.MavAutopilot.ARDUPILOTMEGA;
+const ARMED_FLAG = minimal.MavModeFlag.SAFETY_ARMED;
+const GUIDED_MODE = ardupilotmega.CopterMode.GUIDED;
 
 const COPTER_MODE_NAMES = new Map<number, string>();
-for (const [name, value] of Object.entries(ardupilotmega.CopterMode as unknown as Record<string, number | string>)) {
+for (const [name, value] of Object.entries(ardupilotmega.CopterMode)) {
   if (typeof value === "number") COPTER_MODE_NAMES.set(value, name);
 }
 
@@ -58,11 +52,28 @@ export type VehicleSnapshot = {
   gcsFailsafeEnabled?: boolean;
   /** Verified launch elevation in meters above mean sea level. */
   launchElevationM?: number;
+  /** Verified launch position used to confirm RTL arrival. */
+  launchLatitudeDeg?: number;
+  launchLongitudeDeg?: number;
   launchElevationVerified: boolean;
 };
 
 export function emptySnapshot(): VehicleSnapshot {
   return { armed: false, mode: "UNKNOWN", guided: false, launchElevationVerified: false };
+}
+
+const HEARTBEAT_FRESHNESS_MS = 3_000;
+const POSITION_FRESHNESS_MS = 10_000;
+
+/** Both control streams must be known and recent enough for flight commands. */
+export function hasFreshControlTelemetry(snapshot: VehicleSnapshot, nowMs: number): boolean {
+  const positionObservedAtMs = snapshot.observation?.observedAtMs;
+  return (
+    snapshot.lastHeartbeatMs !== undefined &&
+    positionObservedAtMs !== undefined &&
+    nowMs - snapshot.lastHeartbeatMs <= HEARTBEAT_FRESHNESS_MS &&
+    nowMs - positionObservedAtMs <= POSITION_FRESHNESS_MS
+  );
 }
 
 export type HeartbeatObservation = {
@@ -151,7 +162,13 @@ export class VehicleTracker {
     const max = Math.max(...recent);
     if (max - min <= LAUNCH_STABILITY_M) {
       const mean = recent.reduce((sum, value) => sum + value, 0) / recent.length;
-      this.snapshot = { ...this.snapshot, launchElevationM: mean, launchElevationVerified: true };
+      this.snapshot = {
+        ...this.snapshot,
+        launchElevationM: mean,
+        launchLatitudeDeg: observation.latitudeDeg,
+        launchLongitudeDeg: observation.longitudeDeg,
+        launchElevationVerified: true
+      };
     }
   }
 }

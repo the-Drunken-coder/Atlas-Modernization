@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type {
   CommandManifest,
   EntityCheckInTelemetry,
+  EntityComponents,
   TaskFailureCode,
   TaskResource
 } from "@the-drunken-coder/atlas-sdk";
@@ -56,6 +57,7 @@ export type FlightTelemetry = {
   armed?: boolean;
   flightMode?: string;
   launchElevationM?: number;
+  batteryRemainingPercent?: number;
 };
 
 function failureCodeFor(code: FailureCode): TaskFailureCode {
@@ -96,7 +98,10 @@ export class CoreAttachment {
   }
 
   async reportStart(taskId: string): Promise<void> {
-    await this.client.tasks.start(taskId, { runtimeId: this.runtimeId });
+    const task = await this.client.tasks.start(taskId, { runtimeId: this.runtimeId });
+    if (task.status !== "in_progress") {
+      throw new Error(`Core did not grant execution for Task ${taskId}; authoritative status is ${task.status}.`);
+    }
   }
 
   async reportProgress(taskId: string, progress: number): Promise<void> {
@@ -123,34 +128,23 @@ export class CoreAttachment {
       flat.speed_m_s = telemetry.position.speedMS;
       flat.heading_deg = telemetry.position.headingDeg;
     }
-    // components.telemetry carries flight fields and the flat movement values
-    // operators and takeoff conversion need; top-level flat fields feed movement history.
-    const componentTelemetry: {
-      armed?: boolean;
-      flight_mode?: string;
-      launch_elevation_m?: number;
-      latitude?: number;
-      longitude?: number;
-      altitude_m?: number;
-      speed_m_s?: number;
-      heading_deg?: number;
-    } = {};
-    if (telemetry.armed !== undefined) componentTelemetry.armed = telemetry.armed;
-    if (telemetry.flightMode !== undefined) componentTelemetry.flight_mode = telemetry.flightMode;
+    // Flat fields feed both movement history and Core's telemetry component.
+    // Only Asset-specific flight state belongs in the explicit component.
+    const flight: NonNullable<EntityComponents["telemetry"]> = {};
+    if (telemetry.armed !== undefined) flight.armed = telemetry.armed;
+    if (telemetry.flightMode !== undefined) flight.flight_mode = telemetry.flightMode;
     if (telemetry.launchElevationM !== undefined) {
-      componentTelemetry.launch_elevation_m = telemetry.launchElevationM;
+      flight.launch_elevation_m = telemetry.launchElevationM;
     }
-    if (telemetry.position !== undefined) {
-      componentTelemetry.latitude = telemetry.position.latitude;
-      componentTelemetry.longitude = telemetry.position.longitude;
-      componentTelemetry.altitude_m = telemetry.position.altitudeMslM;
-      componentTelemetry.speed_m_s = telemetry.position.speedMS;
-      componentTelemetry.heading_deg = telemetry.position.headingDeg;
+    const components: EntityComponents = {};
+    if (Object.keys(flight).length > 0) components.telemetry = flight;
+    if (telemetry.batteryRemainingPercent !== undefined) {
+      components.health = { battery_percent: telemetry.batteryRemainingPercent };
     }
-    if (Object.keys(componentTelemetry).length > 0) {
+    if (Object.keys(components).length > 0) {
       await this.client.entities.checkIn(this.assetId, {
         telemetry: flat,
-        components: { telemetry: componentTelemetry }
+        components
       });
     } else {
       await this.client.entities.checkIn(this.assetId, { telemetry: flat });
