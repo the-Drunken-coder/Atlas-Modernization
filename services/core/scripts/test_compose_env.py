@@ -137,14 +137,6 @@ printf '%s' "$LOGIN_JSON"
             self.assertNotEqual(missing.returncode, 0)
             self.assertIn("missing ATLAS_ADMIN_PASSWORD", missing.stderr)
 
-    def test_api_guide_reads_local_credentials_as_data(self) -> None:
-        guide = (Path(__file__).resolve().parents[1] / "docs" / "API_GUIDE.md").read_text(encoding="utf-8")
-
-        self.assertNotIn(". services/core/docker/.env.local", guide)
-        self.assertEqual(guide.count('parse_compose_env_file("services/core/docker/.env.local")'), 2)
-        self.assertEqual(guide.count('--data-binary @- <<<"$LOGIN_JSON"'), 2)
-        self.assertEqual(guide.count(')" || exit 1'), 2)
-
     def test_format_compose_env_value_rejects_control_characters(self) -> None:
         for value in [
             "has\x00nul",

@@ -21,13 +21,6 @@ func TestGetFullDatasetByteBudgetPreservesCursorContinuation(t *testing.T) {
 	for i := range ids {
 		ids[i] = fmt.Sprintf("%s-%02d", prefix, i)
 	}
-	t.Cleanup(func() {
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cleanupCancel()
-		if _, err := pool.Exec(cleanupCtx, `DELETE FROM entities WHERE entity_id = ANY($1)`, ids); err != nil {
-			t.Errorf("cleanup byte-budget entities: %v", err)
-		}
-	})
 
 	payload := strings.Repeat("x", 950*1024)
 	for _, id := range ids {
@@ -98,13 +91,6 @@ func TestReadSnapshotVersionIgnoresUncommittedCounterAllocation(t *testing.T) {
 	suffix := time.Now().UTC().UnixNano()
 	committedID := fmt.Sprintf("snapshot-visible-%d", suffix)
 	uncommittedID := fmt.Sprintf("snapshot-hidden-%d", suffix)
-	t.Cleanup(func() {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if _, err := pool.Exec(cleanupCtx, `DELETE FROM entities WHERE entity_id = ANY($1)`, []string{committedID, uncommittedID}); err != nil {
-			t.Errorf("cleanup snapshot test entities: %v", err)
-		}
-	})
 
 	committed, err := NewEntityActions(pool).Create(ctx, CreateEntityParams{EntityID: committedID, EntityType: "asset"})
 	if err != nil {
@@ -166,13 +152,6 @@ func TestFullDatasetKeepsInitialVersionAcrossInterleavedContinuationUpdates(t *t
 	prefix := fmt.Sprintf("full-watermark-%d-", time.Now().UTC().UnixNano())
 	firstID := prefix + "z"
 	secondID := prefix + "a"
-	t.Cleanup(func() {
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cleanupCancel()
-		if _, err := pool.Exec(cleanupCtx, `DELETE FROM entities WHERE entity_id = ANY($1)`, []string{firstID, secondID}); err != nil {
-			t.Errorf("cleanup full dataset watermark entities: %v", err)
-		}
-	})
 
 	var createdAt time.Time
 	if err := pool.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&createdAt); err != nil {

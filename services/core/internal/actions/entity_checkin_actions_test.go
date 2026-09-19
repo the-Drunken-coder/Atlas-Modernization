@@ -20,7 +20,7 @@ func TestEntityCheckinPreconditions(t *testing.T) {
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer cancel()
 				entityID := fmt.Sprintf("checkin-%d", time.Now().UnixNano())
-				defer cleanupFinalBlobValidationRowsWithTimeout(t, pool, entityID, "")
+
 				before, err := entities.Create(ctx, CreateEntityParams{EntityID: entityID, EntityType: "asset"})
 				if err != nil {
 					t.Fatalf("create entity: %v", err)

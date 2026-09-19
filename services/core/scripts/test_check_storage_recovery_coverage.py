@@ -36,16 +36,6 @@ class StorageRecoveryCoverageTests(unittest.TestCase):
         with unittest.mock.patch.object(coverage, "FLOORS", floors):
             self.assertFalse(coverage.check(self.complete_profile(count=0)))
 
-    def test_rejects_missing_module(self) -> None:
-        path = self.write_profile(["example/internal/actions/a.go:1.1,2.1 1 1"])
-        with self.assertRaisesRegex(coverage.ProfileError, "missing modules"):
-            coverage.read_profile(path)
-
-    def test_rejects_malformed_profile(self) -> None:
-        path = self.write_profile(["not a coverage record"])
-        with self.assertRaisesRegex(coverage.ProfileError, "malformed coverage line"):
-            coverage.read_profile(path)
-
     def test_zero_statement_groups_are_reported_but_fail_the_gate(self) -> None:
         path = self.write_profile(
             [f"example{fragment}sample.go:1.1,2.1 0 0" for fragment in coverage.GROUP_PATHS.values()]

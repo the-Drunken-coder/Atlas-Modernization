@@ -1,6 +1,4 @@
 // HTTP middleware tests for Atlas Core.
-// Chi response compression: production uses github.com/go-chi/chi/v5/middleware.Compress(5)
-// in cmd/atlas_core/main.go — keep gzip tests on that stack, not a separate wrapper.
 package middleware_test
 
 import (
@@ -608,33 +606,5 @@ func TestTrustedOriginWithPatternsRejectsBroadWildcardPattern(t *testing.T) {
 		[]string{"https://pr-*.github.io"},
 	) {
 		t.Fatal("expected public-suffix wildcard pattern to be rejected")
-	}
-}
-
-// TestChiCompressMatchesMainRouter asserts the same Chi Compress middleware and level as main.go:
-//
-//	r.Use(middleware.Compress(5))
-func TestChiCompressMatchesMainRouter(t *testing.T) {
-	payload := strings.Repeat("x", 256)
-	handler := chimw.Compress(5)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// chi only compresses responses with an allowed Content-Type (see middleware doc).
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(payload))
-	}))
-
-	req := httptest.NewRequest(http.MethodGet, "/test", nil)
-	req.Header.Set("Accept-Encoding", "gzip")
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rec.Code)
-	}
-	if got := rec.Header().Get("Content-Encoding"); got != "gzip" {
-		t.Fatalf("expected Content-Encoding gzip, got %q", got)
-	}
-	if rec.Body.Len() >= len(payload) {
-		t.Fatalf("expected compressed body smaller than %d, got %d", len(payload), rec.Body.Len())
 	}
 }

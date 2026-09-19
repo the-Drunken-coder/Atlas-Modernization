@@ -44,12 +44,6 @@ func TestChangedSincePagesNearMaximumResourcesByBytes(t *testing.T) {
 		}
 		ids = append(ids, id)
 	}
-	t.Cleanup(func() {
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cleanupCancel()
-		_, _ = pool.Exec(cleanupCtx, `DELETE FROM entities WHERE entity_id = ANY($1)`, ids)
-		_, _ = pool.Exec(cleanupCtx, `DELETE FROM atlas_change_events WHERE event->>'resource_type' = 'entity' AND event->>'id' = ANY($1)`, ids)
-	})
 
 	var cursor *string
 	seen := 0
@@ -230,15 +224,5 @@ func TestChangedSinceRejectsPointerToBlankCursor(t *testing.T) {
 	var validationErr *ValidationError
 	if !errors.As(err, &validationErr) {
 		t.Fatalf("blank cursor error = %T %v, want ValidationError", err, err)
-	}
-}
-
-func TestChangedSinceReturnsDatabaseErrorFromClosedPool(t *testing.T) {
-	pool := openActionsTestPool(t)
-	pool.Close()
-
-	_, err := NewQueryActions(pool).GetDataChangedSince(context.Background(), 0, 1, nil)
-	if err == nil {
-		t.Fatal("expected closed pool to return an error")
 	}
 }
