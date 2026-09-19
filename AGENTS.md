@@ -14,7 +14,7 @@ Keep only durable, non-obvious repository constraints here; report surprises and
 
 - `services/core/` and `packages/protocol/` are separate Go modules. npm workspaces share the root lockfile; use Node 24 from `.nvmrc`, install at the root, and consume public package exports.
 - Protocol source of truth: `packages/protocol/schema/jsonschema/atlas.schema.json`. The authored Go API is `packages/protocol/generated/go/atlasprotocol/types.go`; regenerate with `go run ./tools/generate` in `packages/protocol/`. Protocol docs belong in `docs/atlas-protocol/`.
-- `services/` hosts central software, `surfaces/` operator software, `edge/` field software, and `packages/` reusable code. Packages must not import the other three. Keep `edge/asset` and `edge/gateway` README-only until their architectures are approved.
+- `services/` hosts central software, `surfaces/` operator software, `edge/` field software, and `packages/` reusable code. Packages must not import the other three. `edge/asset` is the first supported Asset Host. Keep `edge/gateway` README-only until its architecture is approved.
 - One logical Asset has one Asset Host; attached controllers, autopilots, sensors, and radios are peripherals, not Atlas compute nodes.
 - Parse requests in HTTP handlers, orchestrate in actions/services, and name non-trivial wire types. Reuse typed patch/resource helpers instead of parallel JSON mutation pipelines, promoted-field lists, or broad TypeScript casts.
 - The command interface is static Cloudflare Pages/Vite; its browser SDK calls Core directly. Never recreate the Worker proxy or runtime config/auth/API routes. For interface work, read `surfaces/command-interface/README.md`.

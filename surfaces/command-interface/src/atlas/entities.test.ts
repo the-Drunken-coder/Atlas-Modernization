@@ -2,14 +2,18 @@ import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
 import { describe, expect, it } from "vitest";
 import { entityFixture as entity } from "../../test/fixtures.js";
 import {
+  entityArmed,
   entityClassification,
   entityConnectionStatus,
   entityDisplayName,
+  entityFlightMode,
   entityKind,
+  entityLaunchElevation,
   entityLinkState,
   entityPosition,
   heartbeatLevel,
-  isSelectableKind
+  isSelectableKind,
+  telemetryInputFresh
 } from "./entities.js";
 
 describe("entity accessors", () => {
@@ -48,6 +52,20 @@ describe("entity accessors", () => {
   it("reads structured indicators", () => {
     expect(entityLinkState(entity({ components: { communications: { link_state: "degraded" } } }))).toBe("degraded");
     expect(entityClassification(entity({ components: { mil_view: { classification: "hostile" } } }))).toBe("hostile");
+    expect(entityArmed(entity({ components: { telemetry: { armed: true } } }))).toBe(true);
+    expect(entityFlightMode(entity({ components: { telemetry: { flight_mode: "GUIDED" } } }))).toBe("GUIDED");
+    expect(entityLaunchElevation(entity({ components: { telemetry: { launch_elevation_m: 560.5 } } }))).toBe(560.5);
+  });
+
+  it("treats only recent telemetry as fresh enough to prefill altitude", () => {
+    const now = Date.parse("2026-06-20T00:10:00Z");
+    expect(
+      telemetryInputFresh(entity({ components: { telemetry: { last_update: "2026-06-20T00:09:55Z" } } }), now)
+    ).toBe(true);
+    expect(
+      telemetryInputFresh(entity({ components: { telemetry: { last_update: "2026-06-20T00:09:00Z" } } }), now)
+    ).toBe(false);
+    expect(telemetryInputFresh(entity({ components: {} }), now)).toBe(false);
   });
 
   it("grades heartbeat freshness against thresholds", () => {

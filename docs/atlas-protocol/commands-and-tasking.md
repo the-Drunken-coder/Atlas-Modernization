@@ -52,7 +52,7 @@ _Avoid_: Immediate Task, Control Task, operational Task
 
 The Command Catalog moves into Atlas Protocol beside the schemas it references. There is one canonical catalog.
 
-The initial generated catalog is intentionally empty. Atlas first ships the catalog machinery and the documented process for adding Commands, not a preset collection of Commands. Core therefore serves an empty array until a Command is deliberately added to Protocol.
+The generated catalog starts empty until a Command is deliberately added. The first production Commands are the `flight.*` family; Core serves that Protocol-owned catalog rather than maintaining another definition.
 
 When a Command is added, its definition has this shape:
 
@@ -81,12 +81,13 @@ The catalog does not need wrapper metadata such as a catalog type, name, or desc
 
 ### Authored file layout
 
-Command definitions are authored as one JSON file per operational namespace. The initial empty catalog has this layout:
+Command definitions are authored as one JSON file per operational namespace. The catalog currently contains `flight.json`:
 
 ```text
 packages/protocol/
 ├── commands/
-│   └── README.md
+│   ├── README.md
+│   └── flight.json
 ├── schema/
 │   └── jsonschema/
 │       └── atlas.schema.json
@@ -94,10 +95,11 @@ packages/protocol/
     └── command_catalog.json
 
 docs/atlas-protocol/commands/
-└── README.md
+├── README.md
+└── flight/
 ```
 
-Adding `sensing.scan_area`, for example, creates `commands/sensing.json` and `docs/atlas-protocol/commands/sensing/scan-area.md`. Other namespace files and documentation directories appear only when they contain a real Command.
+Adding another Command, for example `sensing.scan_area`, creates `commands/sensing.json` and `docs/atlas-protocol/commands/sensing/scan-area.md`. Other namespace files and documentation directories appear only when they contain a real Command.
 
 Each namespace file contains a JSON array of Command definitions. Every `command` identifier in the file must use the filename as its namespace prefix. For example, every definition in `mobility.json` begins with `mobility.`.
 
@@ -109,6 +111,7 @@ Input and output schemas remain named definitions in `schema/jsonschema/atlas.sc
 
 The first part of a Command name identifies its operational domain:
 
+- `flight`: aircraft takeoff, go-to, return-to-launch, and land
 - `mobility`: direct movement, such as going to a position or stopping
 - `navigation`: higher-level movement, such as following a route or target
 - `sensing`: observing an environment or area
@@ -123,6 +126,10 @@ The first part of a Command name identifies its operational domain:
 Examples include:
 
 ```text
+flight.takeoff
+flight.goto
+flight.return_to_launch
+flight.land
 mobility.goto
 mobility.stop
 navigation.follow_route
@@ -585,7 +592,7 @@ When an operator selects an Asset, Atlas shows only the Commands in that Asset's
 4. whether it runs immediately or joins the Task Queue
 5. whether an active Task can be cancelled and whether it reports progress
 
-With the initial empty catalog and manifest, Atlas shows an intentional no-Commands state. It does not fall back to the retired Core catalog or invent controls from Asset data.
+Atlas shows Commands only at the intersection of the Protocol catalog, the current ready runtime manifest, and registered browser inputs. It does not fall back to the retired Core catalog or invent controls from Asset data.
 
 Task state is presented in user language:
 
@@ -614,7 +621,7 @@ packages/sdk/test/
 └── tasking-wire.test.ts
 ```
 
-The JSON corpus defines portable inputs, events, and expected outcomes. Concrete Core tests are authoritative for lifecycle, ordering, runtime fencing, expiry, and transactional persistence. The SDK test verifies wire mapping. Asset execution acceptance belongs to the future Asset implementation. Because the shipped catalog starts empty, the focused consumers use test-only fixture Commands that are excluded from the generated catalog.
+The JSON corpus defines portable inputs, events, and expected outcomes. Concrete Core tests are authoritative for lifecycle, ordering, runtime fencing, expiry, and transactional persistence. The SDK test verifies wire mapping. Asset execution acceptance belongs to the future Asset implementation. Focused consumers still use test-only fixture Commands that are excluded from the generated catalog when they need Commands that are not in production. The production catalog currently contains the `flight.*` family.
 
 The empty-catalog infrastructure is not complete until these behaviors are demonstrated:
 

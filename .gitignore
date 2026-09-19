@@ -63,6 +63,8 @@ coverage/
 /surfaces/command-interface/worker-configuration.d.ts
 /simulations/dist/
 /simulations/.atlas-simulations/
+/edge/asset/dist/
+/edge/asset/asset.toml
 /tools/atlas-core-release/dist/
 
 # --- Atlas deployment state and release staging ---

@@ -45,7 +45,7 @@ import {
 } from "./support/sse-response-contract.mjs";
 
 const reproduction =
-  "npm run build:sdk && node --import ./simulations/node_modules/tsx/dist/loader.mjs tests/acceptance/simulations/multi-client-sync.mjs";
+  "npm run build:sdk && node tests/acceptance/simulations/multi-client-sync.mjs";
 const scenarioID = "multi-client-sync";
 const nightly = process.env.ATLAS_ACCEPTANCE_NIGHTLY === "1";
 const normalInputs = nightly

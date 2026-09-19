@@ -76,6 +76,35 @@ export function entityAltitude(entity: EntityResource): number | undefined {
   return numberOrUndefined(entity.components.telemetry?.altitude_m);
 }
 
+export function entityArmed(entity: EntityResource): boolean | undefined {
+  const armed = entity.components.telemetry?.armed;
+  return typeof armed === "boolean" ? armed : undefined;
+}
+
+export function entityFlightMode(entity: EntityResource): string | undefined {
+  const mode = entity.components.telemetry?.flight_mode;
+  return typeof mode === "string" && mode.length > 0 ? mode : undefined;
+}
+
+export function entityLaunchElevation(entity: EntityResource): number | undefined {
+  return numberOrUndefined(entity.components.telemetry?.launch_elevation_m);
+}
+
+export function entityTelemetryUpdatedAt(entity: EntityResource): string | undefined {
+  return entity.components.telemetry?.last_update;
+}
+
+/** Telemetry older than this is too stale to prefill command altitude. */
+export const TELEMETRY_INPUT_FRESH_SECONDS = 10;
+
+export function telemetryInputFresh(entity: EntityResource, now: number = Date.now()): boolean {
+  const updatedAt = entityTelemetryUpdatedAt(entity);
+  if (!updatedAt) return false;
+  const timestamp = Date.parse(updatedAt);
+  if (!Number.isFinite(timestamp)) return false;
+  return now - timestamp <= TELEMETRY_INPUT_FRESH_SECONDS * 1000;
+}
+
 export function entityLinkState(entity: EntityResource): LinkState | undefined {
   return entity.components.communications?.link_state;
 }

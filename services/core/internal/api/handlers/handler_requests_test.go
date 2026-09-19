@@ -489,6 +489,11 @@ func TestEntityCheckinRequestComponentUpdate(t *testing.T) {
 		HeadingDeg: &heading,
 		Components: map[string]interface{}{
 			"custom_test": "preserved",
+			"telemetry": map[string]interface{}{
+				"armed":              true,
+				"flight_mode":        "GUIDED",
+				"launch_elevation_m": 575.0,
+			},
 		},
 	}, now)
 
@@ -510,6 +515,9 @@ func TestEntityCheckinRequestComponentUpdate(t *testing.T) {
 	}
 	if telemetry["latitude"] != latitude || telemetry["heading_deg"] != heading || telemetry["last_update"] != wantTime {
 		t.Fatalf("telemetry component = %#v, want latitude, heading, and last_update", telemetry)
+	}
+	if telemetry["armed"] != true || telemetry["flight_mode"] != "GUIDED" || telemetry["launch_elevation_m"] != 575.0 {
+		t.Fatalf("telemetry component = %#v, want preserved flight fields", telemetry)
 	}
 
 	heartbeat, ok := got["heartbeat"].(map[string]interface{})

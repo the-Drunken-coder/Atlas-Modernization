@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
 import {
   appendFileSync,
   existsSync,
@@ -17,14 +18,10 @@ const defaultServerEntrypoint = fileURLToPath(
   new URL("./server-launcher.mjs", import.meta.url),
 );
 const simulationPackageRoot = join(repositoryRoot, "simulations");
-const tsxLoader = join(
-  repositoryRoot,
-  "simulations",
-  "node_modules",
-  "tsx",
-  "dist",
-  "loader.mjs",
+const simulationRequire = createRequire(
+  join(simulationPackageRoot, "package.json"),
 );
+const tsxLoader = simulationRequire.resolve("tsx");
 const readinessTimeoutMs = 30_000;
 const shutdownTimeoutMs = 5_000;
 const startupRetryAttempts = 3;

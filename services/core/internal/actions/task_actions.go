@@ -39,8 +39,8 @@ func NewTaskActionsWithPlugins(pool *pgxpool.Pool, pluginIDs []string) *TaskActi
 }
 
 // NewTaskActionsWithCatalog creates a Task module with an explicit catalog.
-// It exists so shared conformance fixtures can exercise behavior while the
-// production catalog remains empty.
+// It exists so shared conformance fixtures can exercise behavior without
+// depending on the production Command Catalog.
 func NewTaskActionsWithCatalog(pool *pgxpool.Pool, catalog protocol.CommandCatalog) *TaskActions {
 	return newTaskActions(pool, catalog, nil)
 }

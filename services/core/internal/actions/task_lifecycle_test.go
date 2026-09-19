@@ -1021,15 +1021,34 @@ func entityChangeEventCount(ctx context.Context, t *testing.T, pool interface {
 	return count
 }
 
-func TestProductionCatalogRejectsEveryCommand(t *testing.T) {
+func TestProductionCatalogContainsFlightCommands(t *testing.T) {
 	var catalog protocol.CommandCatalog
 	if err := json.Unmarshal([]byte(protocol.CommandCatalogJSON), &catalog); err != nil {
 		t.Fatal(err)
 	}
-	if len(catalog) != 0 {
-		t.Fatalf("production Command Catalog has %d entries, want zero", len(catalog))
+	want := map[string]string{
+		"flight.goto":             "atlas.flight.GotoRequest",
+		"flight.land":             "atlas.tasking.EmptyObject",
+		"flight.return_to_launch": "atlas.tasking.EmptyObject",
+		"flight.takeoff":          "atlas.flight.TakeoffRequest",
 	}
-	if _, ok := NewTaskActionsWithCatalog(nil, catalog).catalog["fixture.immediate"]; ok {
+	if len(catalog) != len(want) {
+		t.Fatalf("production Command Catalog has %d entries, want %d", len(catalog), len(want))
+	}
+	actions := NewTaskActionsWithCatalog(nil, catalog)
+	for command, inputSchema := range want {
+		definition, ok := actions.catalog[command]
+		if !ok {
+			t.Fatalf("production catalog missing %s", command)
+		}
+		if definition.InputSchema != inputSchema {
+			t.Fatalf("%s input_schema = %q, want %q", command, definition.InputSchema, inputSchema)
+		}
+		if definition.Scheduling != protocol.CommandSchedulingImmediate {
+			t.Fatalf("%s scheduling = %q, want immediate", command, definition.Scheduling)
+		}
+	}
+	if _, ok := actions.catalog["fixture.immediate"]; ok {
 		t.Fatal("production Task module accepted fixture Command")
 	}
 }

@@ -1109,6 +1109,27 @@
         }
       ]
     },
+    "GotoRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "altitude_m": {
+          "$ref": "#/$defs/FiniteNumber"
+        },
+        "latitude": {
+          "$ref": "#/$defs/Latitude"
+        },
+        "longitude": {
+          "$ref": "#/$defs/Longitude"
+        }
+      },
+      "required": [
+        "altitude_m",
+        "latitude",
+        "longitude"
+      ],
+      "type": "object",
+      "description": "Absolute destination in meters above mean sea level. Senders must not infer terrain elevation from a map click."
+    },
     "HealthComponent": {
       "additionalProperties": false,
       "properties": {
@@ -2289,6 +2310,19 @@
       ],
       "type": "object"
     },
+    "TakeoffRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "altitude_m": {
+          "$ref": "#/$defs/FiniteNumber"
+        }
+      },
+      "required": [
+        "altitude_m"
+      ],
+      "type": "object",
+      "description": "Takeoff target in meters above mean sea level. Operator inputs express height above launch; the submitter converts to mean sea level using verified launch elevation before Task creation."
+    },
     "TaskAcknowledgeRequest": {
       "additionalProperties": false,
       "type": "object"
@@ -2741,6 +2775,12 @@
         "altitude_m": {
           "$ref": "#/$defs/FiniteNumber"
         },
+        "armed": {
+          "type": "boolean"
+        },
+        "flight_mode": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
         "heading_deg": {
           "$ref": "#/$defs/FiniteNumber",
           "exclusiveMaximum": 360,
@@ -2752,6 +2792,9 @@
         },
         "latitude": {
           "$ref": "#/$defs/Latitude"
+        },
+        "launch_elevation_m": {
+          "$ref": "#/$defs/FiniteNumber"
         },
         "longitude": {
           "$ref": "#/$defs/Longitude"
