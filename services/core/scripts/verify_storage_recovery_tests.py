@@ -11,7 +11,6 @@ from pathlib import Path
 PACKAGE = "github.com/the-drunken-coder/atlas/services/core/internal/actions"
 EXPECTED = {
     "TestObjectDeletePublishesChangeBeforeStorageCleanup",
-    "TestObjectUploadLockKey",
     "TestObjectDeletedAfterUploadPreflight",
     "TestStorageDeletionRetryDelay",
     "TestReconcileStorageDeletionsDeletesQueuedPath",
@@ -21,8 +20,6 @@ EXPECTED = {
     "TestPathBearingObjectDeleteRequiresStorage",
     "TestObjectUploadReplacementDeletesPersistedOldBucket",
     "TestUploadDoesNotResurrectObjectDeletedDuringBlobWrite",
-    "TestUploadCrashLeavesRecoverableIntentForNewAndReplacementBlobs",
-    "TestStorageUploadCrashHelper",
     "TestUploadHeartbeatOwnershipLossCancelsBeforeMetadataCommit",
     "TestUploadHeartbeatRetriesTransientRenewalFailure",
     "TestReconcileStorageUploadIntentDeletesUnreferencedBlob",

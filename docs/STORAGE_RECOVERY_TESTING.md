@@ -1,6 +1,6 @@
 # Core storage recovery testing
 
-The storage recovery tier runs Atlas Core's existing upload-intent, deletion-outbox, and object-deletion-fence assertions against disposable PostgreSQL and MinIO containers. It adds real-storage cases for a process crash after MinIO accepts a blob, a failed deletion followed by recovery, a queued path that became live, and an upload to unavailable storage.
+The storage recovery tier runs Atlas Core's upload-intent, deletion-outbox, and object-deletion-fence assertions against disposable PostgreSQL and MinIO containers. It covers a process crash after MinIO accepts a blob, a failed deletion followed by recovery, a queued path that became live, and an upload to unavailable storage. `TestRealStorageInterruptedUploadRecovery` owns the new-upload and replacement-upload crash scenarios, including their child-process helper and recovery assertions.
 
 Run the required tier from the repository root:
 

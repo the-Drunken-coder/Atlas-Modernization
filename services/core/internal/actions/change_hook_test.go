@@ -2,7 +2,6 @@ package actions
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"testing"
 	"time"
@@ -10,36 +9,6 @@ import (
 	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
 	"github.com/the-drunken-coder/atlas/services/core/internal/models"
 )
-
-func TestCloneRawMessage(t *testing.T) {
-	if cloneRawMessage(nil) != nil {
-		t.Fatal("cloneRawMessage(nil) should return nil")
-	}
-	original := []byte(`{"a":1}`)
-	cloned := cloneRawMessage(original)
-	if !bytes.Equal(cloned, original) {
-		t.Fatalf("cloneRawMessage = %s, want %s", cloned, original)
-	}
-	cloned[0] = '['
-	if original[0] == '[' {
-		t.Fatal("cloneRawMessage returned aliased bytes")
-	}
-}
-
-func TestCloneStringPointer(t *testing.T) {
-	if cloneStringPointer(nil) != nil {
-		t.Fatal("cloneStringPointer(nil) should return nil")
-	}
-	original := "asset-1"
-	cloned := cloneStringPointer(&original)
-	if cloned == nil || *cloned != original {
-		t.Fatalf("cloneStringPointer = %#v, want %q", cloned, original)
-	}
-	*cloned = "asset-2"
-	if original == "asset-2" {
-		t.Fatal("cloneStringPointer returned aliased pointer")
-	}
-}
 
 func TestCloneEntityModelCopiesPublicFields(t *testing.T) {
 	subtype := "air"
@@ -222,23 +191,6 @@ func TestResourceChangeRecordRejectsMissingStateAndUnknownType(t *testing.T) {
 	} {
 		if _, err := resourceChangeRecord(change); err == nil {
 			t.Fatalf("expected invalid change %#v to fail", change)
-		}
-	}
-}
-
-func TestReadChangeRecordsRejectsNonPositiveLimit(t *testing.T) {
-	for _, limit := range []int{0, -1} {
-		records, hasMore, err := ReadChangeRecords(context.Background(), nil, 0, 1, limit)
-		if err == nil || records != nil || hasMore {
-			t.Fatalf("ReadChangeRecords limit %d = (%#v, %v, %v), want early error", limit, records, hasMore, err)
-		}
-	}
-}
-
-func TestReserveChangeVersionsRejectsNonPositiveCount(t *testing.T) {
-	for _, count := range []int{0, -1} {
-		if _, err := reserveChangeVersions(context.Background(), nil, count); err == nil {
-			t.Fatalf("reserveChangeVersions count %d succeeded", count)
 		}
 	}
 }

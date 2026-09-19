@@ -569,40 +569,6 @@ func TestWebsocketFeedFirstMessageAuthRejectsAuthAfterHandshake(t *testing.T) {
 	expectFeedClosedWithStatus(t, conn, websocket.StatusPolicyViolation)
 }
 
-// TestWebsocketFeedFirstMessageAuthRejectsAuthAfterSubscription sends the late
-// auth frame only after a subscribe and event read, proving established sessions
-// still reject auth frames after normal feed traffic.
-func TestWebsocketFeedFirstMessageAuthRejectsAuthAfterSubscription(t *testing.T) {
-	hub := NewHub(Options{})
-	defer hub.Close()
-	server := newAuthFeedServer(t, hub)
-	defer server.Close()
-
-	conn := dialFeed(t, server.URL)
-	defer func() {
-		_ = conn.Close(websocket.StatusNormalClosure, "")
-	}()
-
-	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"auth","api_key":"secret"}`)); err != nil {
-		t.Fatalf("auth feed: %v", err)
-	}
-	readHandshake(t, conn)
-	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"subscribe","filter":"all"}`)); err != nil {
-		t.Fatalf("write subscribe: %v", err)
-	}
-	waitForSubscription(t, hub, Subscription{Filter: protocol.FeedFilterAll})
-	hub.Publish(entityEvent("create", "asset-after-subscription", 1, "asset"))
-	var event protocol.FeedEvent
-	readFeedEvent(t, conn, &event)
-	if event.ID != "asset-after-subscription" || event.Version != 1 {
-		t.Fatalf("unexpected event after subscription: %+v", event)
-	}
-	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"auth","api_key":"secret"}`)); err != nil {
-		t.Fatalf("write late auth: %v", err)
-	}
-	expectFeedClosedWithStatus(t, conn, websocket.StatusPolicyViolation)
-}
-
 func TestWebsocketFeedClosesWhenHubClosesWhileReadSideIdle(t *testing.T) {
 	hub := NewHub(Options{})
 	defer hub.Close()

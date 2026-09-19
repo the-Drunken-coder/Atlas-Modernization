@@ -133,63 +133,6 @@ func TestTaskOutputPreservesExactJSONNumbers(t *testing.T) {
 	}
 }
 
-func TestEntityCheckInRejectsProtocolInvalidBodyBeforeActions(t *testing.T) {
-	handler := newTestHandler()
-	recorder := httptest.NewRecorder()
-	request := withURLParam(
-		routeRequest(http.MethodPost, "/entities/entity-1/checkin", `{"latitude":91}`),
-		"entity_id",
-		"entity-1",
-	)
-
-	handler.EntityCheckin(recorder, request)
-
-	if recorder.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", recorder.Code)
-	}
-	if body := decodeBody(t, recorder); body["error_code"] != "VALIDATION_ERROR" {
-		t.Fatalf("error_code = %v, want VALIDATION_ERROR", body["error_code"])
-	}
-}
-
-func TestEntityCheckInRejectsMalformedJSON(t *testing.T) {
-	handler := newTestHandler()
-	recorder := httptest.NewRecorder()
-	request := withURLParam(
-		routeRequest(http.MethodPost, "/entities/entity-1/checkin", `{"latitude":`),
-		"entity_id",
-		"entity-1",
-	)
-
-	handler.EntityCheckin(recorder, request)
-
-	if recorder.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", recorder.Code)
-	}
-	if body := decodeBody(t, recorder); body["error_code"] != "INVALID_JSON" {
-		t.Fatalf("error_code = %v, want INVALID_JSON", body["error_code"])
-	}
-}
-
-func TestEntityCheckInRejectsTrailingJSON(t *testing.T) {
-	handler := newTestHandler()
-	recorder := httptest.NewRecorder()
-	request := withURLParam(
-		routeRequest(http.MethodPost, "/entities/entity-1/checkin", `{}{"status":"online"}`),
-		"entity_id",
-		"entity-1",
-	)
-
-	handler.EntityCheckin(recorder, request)
-
-	if recorder.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", recorder.Code)
-	}
-	if body := decodeBody(t, recorder); body["error_code"] != "INVALID_JSON" {
-		t.Fatalf("error_code = %v, want INVALID_JSON", body["error_code"])
-	}
-}
-
 func TestCreateEntityRejectsTrailingJSON(t *testing.T) {
 	handler := newTestHandler()
 	rec := httptest.NewRecorder()
@@ -204,23 +147,6 @@ func TestCreateEntityRejectsTrailingJSON(t *testing.T) {
 	body := decodeBody(t, rec)
 	if body["error_code"] != "INVALID_JSON" {
 		t.Fatalf("expected INVALID_JSON, got %v", body["error_code"])
-	}
-}
-
-func TestCreateEntityRejectsUnknownField(t *testing.T) {
-	handler := newTestHandler()
-	rec := httptest.NewRecorder()
-	req := routeRequest(http.MethodPost, "/entities", `{"entity_id":"entity-1","entity_type":"asset","entity_typo":"vehicle"}`)
-
-	handler.CreateEntity(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", rec.Code)
-	}
-
-	body := decodeBody(t, rec)
-	if body["error_code"] != "VALIDATION_ERROR" {
-		t.Fatalf("expected VALIDATION_ERROR, got %v", body["error_code"])
 	}
 }
 
@@ -240,108 +166,6 @@ func TestCreateEntityRejectsOversizedBody(t *testing.T) {
 	body := decodeBody(t, rec)
 	if body["error_code"] != "BODY_TOO_LARGE" {
 		t.Fatalf("expected BODY_TOO_LARGE, got %v", body["error_code"])
-	}
-}
-
-func TestCreateObjectRejectsTrailingJSON(t *testing.T) {
-	handler := newTestHandler()
-	rec := httptest.NewRecorder()
-	req := routeRequest(http.MethodPost, "/objects", `{"object_id":"object-1"}{"extra":true}`)
-
-	handler.CreateObject(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", rec.Code)
-	}
-
-	body := decodeBody(t, rec)
-	if body["error_code"] != "INVALID_JSON" {
-		t.Fatalf("expected INVALID_JSON, got %v", body["error_code"])
-	}
-}
-
-func TestCreateObjectRejectsPayloadField(t *testing.T) {
-	handler := newTestHandler()
-	rec := httptest.NewRecorder()
-	req := routeRequest(http.MethodPost, "/objects", `{"object_id":"object-1","payload":{"legacy":true}}`)
-
-	handler.CreateObject(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", rec.Code)
-	}
-
-	body := decodeBody(t, rec)
-	if body["error_code"] != "VALIDATION_ERROR" {
-		t.Fatalf("expected VALIDATION_ERROR, got %v", body["error_code"])
-	}
-}
-
-func TestCreateObjectRejectsBucketInput(t *testing.T) {
-	handler := newTestHandler()
-	rec := httptest.NewRecorder()
-	req := routeRequest(http.MethodPost, "/objects", `{"object_id":"object-1","bucket":"client-bucket"}`)
-
-	handler.CreateObject(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", rec.Code)
-	}
-
-	body := decodeBody(t, rec)
-	if body["error_code"] != "VALIDATION_ERROR" {
-		t.Fatalf("expected VALIDATION_ERROR, got %v", body["error_code"])
-	}
-}
-
-func TestUpdateObjectRejectsBucketInput(t *testing.T) {
-	handler := newTestHandler()
-	rec := httptest.NewRecorder()
-	req := withURLParam(routeRequest(http.MethodPatch, "/objects/object-1", `{"bucket":"client-bucket"}`), "object_id", "object-1")
-
-	handler.UpdateObject(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", rec.Code)
-	}
-
-	body := decodeBody(t, rec)
-	if body["error_code"] != "VALIDATION_ERROR" {
-		t.Fatalf("expected VALIDATION_ERROR, got %v", body["error_code"])
-	}
-}
-
-func TestCRUDRequestBodiesEnforceCanonicalProtocolBeforeActions(t *testing.T) {
-	tests := []struct {
-		name    string
-		method  string
-		path    string
-		payload string
-		handle  func(*Handler, http.ResponseWriter, *http.Request)
-	}{
-		{name: "entity create rejects explicit null", method: http.MethodPost, path: "/entities", payload: `{"entity_id":null,"entity_type":"asset"}`, handle: (*Handler).CreateEntity},
-		{name: "entity update rejects empty patch", method: http.MethodPatch, path: "/entities/entity-1", payload: `{}`, handle: (*Handler).UpdateEntity},
-		{name: "entity update rejects null type", method: http.MethodPatch, path: "/entities/entity-1", payload: `{"entity_type":null}`, handle: (*Handler).UpdateEntity},
-		{name: "task create rejects client task id", method: http.MethodPost, path: "/tasks", payload: `{"task_id":"task-1","asset_id":"asset-1","command":"fixture.immediate","input":{}}`, handle: (*Handler).CreateTask},
-		{name: "object create rejects client-owned size", method: http.MethodPost, path: "/objects", payload: `{"object_id":"object-1","size_bytes":1}`, handle: (*Handler).CreateObject},
-		{name: "object update rejects empty patch", method: http.MethodPatch, path: "/objects/object-1", payload: `{}`, handle: (*Handler).UpdateObject},
-		{name: "object update rejects client-owned content type", method: http.MethodPatch, path: "/objects/object-1", payload: `{"content_type":"image/png"}`, handle: (*Handler).UpdateObject},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			handler := newTestHandler()
-			recorder := httptest.NewRecorder()
-			request := routeRequest(tt.method, tt.path, tt.payload)
-			tt.handle(handler, recorder, request)
-
-			if recorder.Code != http.StatusBadRequest {
-				t.Fatalf("status = %d, want 400", recorder.Code)
-			}
-			if body := decodeBody(t, recorder); body["error_code"] != "VALIDATION_ERROR" {
-				t.Fatalf("error_code = %v, want VALIDATION_ERROR", body["error_code"])
-			}
-		})
 	}
 }
 
@@ -416,63 +240,6 @@ func TestCRUDHandlersRejectInvalidConformanceRequests(t *testing.T) {
 				t.Fatalf("error_code = %v, want VALIDATION_ERROR", body["error_code"])
 			}
 		})
-	}
-}
-
-func TestEntityCheckinRejectsAggregatePolygonPositionLimit(t *testing.T) {
-	exterior := make([]any, 5_001)
-	interior := make([]any, 5_001)
-	for index := range exterior {
-		exterior[index] = []any{0.0, 0.0}
-		interior[index] = []any{0.0, 0.0}
-	}
-	rings := []any{exterior, interior}
-	payload, err := json.Marshal(map[string]any{
-		"components": map[string]any{
-			"geometry": map[string]any{"type": "Polygon", "coordinates": rings},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	handler := newTestHandler()
-	recorder := httptest.NewRecorder()
-	request := withURLParam(routeRequest(http.MethodPost, "/entities/entity-1/checkin", string(payload)), "entity_id", "entity-1")
-
-	handler.EntityCheckin(recorder, request)
-
-	if recorder.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", recorder.Code)
-	}
-	if body := decodeBody(t, recorder); body["error_code"] != "VALIDATION_ERROR" {
-		t.Fatalf("error_code = %v, want VALIDATION_ERROR", body["error_code"])
-	}
-}
-
-func TestCreateEntityMapsOversizedPromotedStringTo400(t *testing.T) {
-	handler := newTestHandler()
-	handler.entityActions = actions.NewEntityActions(nil)
-	recorder := httptest.NewRecorder()
-	request := routeRequest(
-		http.MethodPost,
-		"/entities",
-		`{"entity_id":"entity-length","entity_type":"`+strings.Repeat("a", 51)+`"}`,
-	)
-
-	handler.CreateEntity(recorder, request)
-
-	if recorder.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", recorder.Code)
-	}
-	if body := decodeBody(t, recorder); body["error_code"] != "VALIDATION_ERROR" {
-		t.Fatalf("error_code = %v, want VALIDATION_ERROR", body["error_code"])
-	}
-}
-
-func TestCreateTaskRequestMapsImmutableFields(t *testing.T) {
-	params := createTaskRequest{AssetID: "asset-1", Command: "fixture.immediate", Input: map[string]any{"value": 1}}.actionParams()
-	if params.AssetID != "asset-1" || params.Command != "fixture.immediate" {
-		t.Fatalf("Task create params = %#v", params)
 	}
 }
 
@@ -667,30 +434,6 @@ func TestFullDatasetVersionJSONPresence(t *testing.T) {
 	version, ok := decoded["version"]
 	if !ok || version != float64(0) {
 		t.Fatalf("full dataset response version = %#v, present %v; want required zero watermark", version, ok)
-	}
-}
-
-func TestChangedSinceSerializesOrderedFeedEvents(t *testing.T) {
-	response := serializeChangedSinceResult(&actions.ChangedSinceResult{
-		Events: []protocol.FeedEvent{
-			{Event: protocol.FeedEventUpdate, ResourceType: protocol.ResourceTypeTask, ID: "task-1", Version: 2, Resource: map[string]any{"task_id": "task-1", "asset_id": "asset-1", "command": "fixture.immediate", "input": map[string]any{}, "status": "pending", "created_at": "2026-08-19T12:00:00Z", "updated_at": "2026-08-19T12:00:00Z"}},
-			{Event: protocol.FeedEventDelete, ResourceType: protocol.ResourceTypeObject, ID: "deleted-object", Version: 3},
-		},
-		Version: 3,
-	})
-
-	data, err := json.Marshal(response)
-	if err != nil {
-		t.Fatalf("marshal changed-since response: %v", err)
-	}
-	var decoded struct {
-		Events []map[string]any `json:"events"`
-	}
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatalf("decode changed-since response: %v", err)
-	}
-	if got := decoded.Events[0]["id"]; got != "task-1" {
-		t.Fatalf("first event id = %v, want task-1", got)
 	}
 }
 

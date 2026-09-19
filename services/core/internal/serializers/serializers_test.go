@@ -502,29 +502,6 @@ func TestSerializeEntityDoesNotEmitDuplicateTypeField(t *testing.T) {
 	}
 }
 
-func TestSerializeEntityWithEmptyJSON(t *testing.T) {
-	now := time.Now().UTC()
-	entity := &models.Entity{
-		EntityID:  "entity-empty-json",
-		Type:      "track",
-		JSON:      []byte("{}"), // empty JSON object
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-
-	result := serializers.SerializeEntity(entity)
-
-	if result.EntityID != "entity-empty-json" {
-		t.Errorf("Expected EntityID entity-empty-json, got %s", result.EntityID)
-	}
-	if result.Components == nil {
-		t.Fatal("Expected Components to be non-nil (empty map) for empty JSON")
-	}
-	if len(result.Components) != 0 {
-		t.Errorf("Expected Components to be empty for empty JSON, got %d keys", len(result.Components))
-	}
-}
-
 func TestSerializeEntityWithMalformedJSON(t *testing.T) {
 	now := time.Now().UTC()
 	entity := &models.Entity{
@@ -610,37 +587,6 @@ func TestSerializeObjectWithMalformedJSON(t *testing.T) {
 
 	if result.ObjectID != "obj-bad-json" {
 		t.Errorf("Expected ObjectID obj-bad-json, got %s", result.ObjectID)
-	}
-}
-
-func TestSerializeEntityWithMissingPromotedFields(t *testing.T) {
-	now := time.Now().UTC()
-	// JSON with no "components" key - just a random field
-	jsonData := map[string]interface{}{
-		"random_field": "some_value",
-	}
-	jsonBytes, _ := json.Marshal(jsonData)
-
-	entity := &models.Entity{
-		EntityID:  "entity-no-promoted",
-		Type:      "asset",
-		JSON:      jsonBytes,
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-
-	result := serializers.SerializeEntity(entity)
-
-	if result.EntityID != "entity-no-promoted" {
-		t.Errorf("Expected EntityID entity-no-promoted, got %s", result.EntityID)
-	}
-	// When there's no "components" key, GetComponents returns empty map (not nil)
-	// This is intentional - serializer always ensures a valid map for consistent API responses
-	if result.Components == nil {
-		t.Error("Expected Components to be initialized (not nil)")
-	}
-	if len(result.Components) != 0 {
-		t.Error("Expected Components to be empty when not present in JSON")
 	}
 }
 

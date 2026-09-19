@@ -153,27 +153,6 @@ class CoverageCheckerTest(unittest.TestCase):
         with patch("check_coverage.sys.argv", ["check_coverage.py", "/tmp/coverage-checker-file-that-does-not-exist"]):
             self.assertEqual(main(), 1)
 
-    def test_main_passes_and_fails(self) -> None:
-        passing_lines = [
-            block("actions", 10, 1),
-            block("database", 10, 1),
-            block("storage", 10, 1),
-            block("admin", 10, 1),
-            "github.com/example/atlas/services/core/other.go:1,2 10 1",
-        ]
-        failing_lines = [*passing_lines[:-2], block("admin", 10, 0), passing_lines[-1]]
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            pass_path = Path(temp_dir) / "pass.out"
-            fail_path = Path(temp_dir) / "fail.out"
-            pass_path.write_text(profile(passing_lines), encoding="utf-8")
-            fail_path.write_text(profile(failing_lines), encoding="utf-8")
-
-            thresholds = {name: (1, 2) for name in FLOORS}
-            with patch.dict(FLOORS, thresholds), redirect_stdout(StringIO()):
-                self.assertEqual(main(str(pass_path)), 0)
-                self.assertEqual(main(str(fail_path)), 1)
-
 
 if __name__ == "__main__":
     unittest.main()

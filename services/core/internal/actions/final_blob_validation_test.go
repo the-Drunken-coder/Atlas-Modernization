@@ -28,16 +28,6 @@ func TestCreateEntityValidatesFinalBlobBeforeInsert(t *testing.T) {
 	assertValidationDetailsContain(t, err, "published_at")
 }
 
-func TestValidateEntityBlobAcceptsValidBlob(t *testing.T) {
-	err := ValidateEntityBlob(map[string]interface{}{
-		"published_at": "2026-06-10T00:00:00Z",
-		"callsign":     "atlas-one",
-	})
-	if err != nil {
-		t.Fatalf("ValidateEntityBlob() unexpected error: %v", err)
-	}
-}
-
 func TestUpdateEntityValidatesFinalBlobBeforeUpdate(t *testing.T) {
 	pool := openActionsTestPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

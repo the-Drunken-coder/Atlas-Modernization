@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -78,7 +79,7 @@ func TestHTTPClientRejectsMalformedAndOversizedPrivateResponses(t *testing.T) {
 		wantKind clientFailure
 	}{
 		{
-			name: "manifest missing operations", body: `{"plugin_id":"reference","display_name":"Reference"}`,
+			name: "manifest missing operations", body: `{"plugin_id":"reference","display_name":"Reference","core_to_plugin_protocol_major":1}`,
 			call: func(client *httpClient, origin string) *clientError {
 				_, err := client.manifest(context.Background(), origin)
 				return err
@@ -86,7 +87,7 @@ func TestHTTPClientRejectsMalformedAndOversizedPrivateResponses(t *testing.T) {
 			wantKind: failureInvalidManifest,
 		},
 		{
-			name: "manifest null operations", body: `{"plugin_id":"reference","display_name":"Reference","operations":null}`,
+			name: "manifest null operations", body: `{"plugin_id":"reference","display_name":"Reference","core_to_plugin_protocol_major":1,"operations":null}`,
 			call: func(client *httpClient, origin string) *clientError {
 				_, err := client.manifest(context.Background(), origin)
 				return err
@@ -94,7 +95,7 @@ func TestHTTPClientRejectsMalformedAndOversizedPrivateResponses(t *testing.T) {
 			wantKind: failureInvalidManifest,
 		},
 		{
-			name: "manifest null tool asset", body: `{"plugin_id":"reference","display_name":"Reference","operations":[],"tool_asset_id":null}`,
+			name: "manifest null tool asset", body: `{"plugin_id":"reference","display_name":"Reference","core_to_plugin_protocol_major":1,"operations":[],"tool_asset_id":null}`,
 			call: func(client *httpClient, origin string) *clientError {
 				_, err := client.manifest(context.Background(), origin)
 				return err
@@ -311,9 +312,11 @@ func TestHTTPClientRejectsNonJSONContentType(t *testing.T) {
 }
 
 func TestHTTPClientDoesNotFollowPrivateRedirects(t *testing.T) {
+	var redirected atomic.Bool
 	redirectTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		redirected.Store(true)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"plugin_id":"reference","display_name":"Reference","operations":[]}`))
+		_, _ = w.Write([]byte(`{"plugin_id":"reference","display_name":"Reference","core_to_plugin_protocol_major":1,"operations":[]}`))
 	}))
 	t.Cleanup(redirectTarget.Close)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -325,6 +328,9 @@ func TestHTTPClientDoesNotFollowPrivateRedirects(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	_, err := newHTTPClient(server.Client()).manifest(context.Background(), server.URL)
+	if redirected.Load() {
+		t.Fatal("private request followed a redirect")
+	}
 	if err == nil || err.kind != failureInvalidManifest {
 		t.Fatalf("error = %#v, want invalid manifest", err)
 	}

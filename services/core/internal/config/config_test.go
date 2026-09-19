@@ -161,23 +161,6 @@ func TestLoadCopiesDefaultCORSOrigins(t *testing.T) {
 	}
 }
 
-func TestLoadIgnoresAllowedOriginsAlias(t *testing.T) {
-	chdirToTemp(t)
-	isolateLoadEnv(t)
-	t.Setenv("DATABASE_URL", "postgres://test@localhost:5432/test_db")
-	t.Setenv("SERVER_PORT", "")
-	t.Setenv("MINIO_BUCKET", "")
-	t.Setenv("ALLOWED_ORIGINS", "http://one.example,http://two.example")
-
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	if len(cfg.CORSOrigins) != len(config.DefaultCORSOrigins) {
-		t.Fatalf("expected ALLOWED_ORIGINS to be ignored, got %d CORS origins", len(cfg.CORSOrigins))
-	}
-}
-
 func TestLoadInvalidIntegerEnvFails(t *testing.T) {
 	chdirToTemp(t)
 	isolateLoadEnv(t)

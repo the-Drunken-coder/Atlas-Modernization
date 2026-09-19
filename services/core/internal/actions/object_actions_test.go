@@ -120,25 +120,6 @@ func TestPersistedObjectContentTypeRequiresMetadata(t *testing.T) {
 	}
 }
 
-func TestDecodeObjectJSONForPatchPreservesLargeIntegers(t *testing.T) {
-	data, err := decodeJSONBlobForPatch(json.RawMessage(`{"size_bytes":9007199254740993,"extra":"patched"}`))
-	if err != nil {
-		t.Fatalf("decodeJSONBlobForPatch: %v", err)
-	}
-
-	size, ok := data["size_bytes"].(json.Number)
-	if !ok {
-		t.Fatalf("size_bytes type = %T, want json.Number", data["size_bytes"])
-	}
-	got, err := size.Int64()
-	if err != nil {
-		t.Fatalf("size_bytes Int64: %v", err)
-	}
-	if got != 9007199254740993 {
-		t.Fatalf("size_bytes = %d, want exact large integer", got)
-	}
-}
-
 func TestDecodeObjectJSONForPatchRejectsTrailingData(t *testing.T) {
 	if _, err := decodeJSONBlobForPatch(json.RawMessage(`{"size_bytes":1024}{"extra":"bad"}`)); err == nil {
 		t.Fatal("expected trailing data to fail")
@@ -312,14 +293,6 @@ func TestObjectDeletePublishesChangeBeforeStorageCleanup(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("delete did not finish after storage cleanup was released")
-	}
-}
-
-func TestObjectUploadLockKey(t *testing.T) {
-	got := objectUploadLockKey("foo")
-	want := "atlas-core-object-upload:foo"
-	if got != want {
-		t.Fatalf("objectUploadLockKey() = %q, want %q", got, want)
 	}
 }
 

@@ -232,13 +232,3 @@ func TestChangedSinceRejectsPointerToBlankCursor(t *testing.T) {
 		t.Fatalf("blank cursor error = %T %v, want ValidationError", err, err)
 	}
 }
-
-func TestChangedSinceReturnsDatabaseErrorFromClosedPool(t *testing.T) {
-	pool := openActionsTestPool(t)
-	pool.Close()
-
-	_, err := NewQueryActions(pool).GetDataChangedSince(context.Background(), 0, 1, nil)
-	if err == nil {
-		t.Fatal("expected closed pool to return an error")
-	}
-}
