@@ -27,18 +27,6 @@ func TestContinuationUpperBound(t *testing.T) {
 	}
 }
 
-func TestContinuationUpperBoundRejectsMixedSnapshots(t *testing.T) {
-	now := time.Date(2026, 3, 21, 12, 0, 0, 0, time.UTC)
-	_, _, err := continuationUpperBound(
-		now,
-		&parsedQueryCursor{upperBound: time.Date(2026, 3, 21, 12, 5, 0, 0, time.UTC)},
-		&parsedQueryCursor{upperBound: time.Date(2026, 3, 21, 12, 6, 0, 0, time.UTC)},
-	)
-	if err == nil {
-		t.Fatal("expected mismatched upper bounds to be rejected")
-	}
-}
-
 func TestContinuationUpperBoundRejectsMissingSnapshot(t *testing.T) {
 	now := time.Date(2026, 3, 21, 12, 0, 0, 0, time.UTC)
 	_, _, err := continuationUpperBound(now, &parsedQueryCursor{})

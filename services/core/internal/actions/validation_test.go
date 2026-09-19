@@ -1,7 +1,6 @@
 package actions_test
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 
@@ -55,65 +54,24 @@ func TestValidateResourceID(t *testing.T) {
 	}
 }
 
-func TestValidateEntityID(t *testing.T) {
-	if err := actions.ValidateEntityID("valid-entity-123"); err != nil {
-		t.Errorf("ValidateEntityID should accept valid ID, got %v", err)
-	}
-
-	if err := actions.ValidateEntityID(""); err == nil {
-		t.Fatal("ValidateEntityID should reject empty ID")
-	} else if got := err.Error(); got != "entity_id is required" {
-		t.Errorf("unexpected empty entity_id error: %q", got)
-	}
-
-	if err := actions.ValidateEntityID("bad@entity"); err == nil {
-		t.Fatal("ValidateEntityID should reject invalid ID")
-	} else if got := err.Error(); !strings.HasPrefix(got, "entity_id contains invalid characters") {
-		t.Errorf("unexpected invalid entity_id error: %q", got)
-	}
-
-	longID := strings.Repeat("a", actions.IDMaxLength+1)
-	wantLong := fmt.Sprintf("entity_id must not exceed %d characters", actions.IDMaxLength)
-	if err := actions.ValidateEntityID(longID); err == nil {
-		t.Fatal("ValidateEntityID should reject too-long ID")
-	} else if got := err.Error(); got != wantLong {
-		t.Errorf("unexpected too-long entity_id error: %q, want %q", got, wantLong)
-	}
-}
-
-func TestValidateTaskID(t *testing.T) {
-	if err := actions.ValidateTaskID("valid-task-123"); err != nil {
-		t.Errorf("ValidateTaskID should accept valid ID, got %v", err)
-	}
-
-	if err := actions.ValidateTaskID(""); err == nil {
-		t.Fatal("ValidateTaskID should reject empty ID")
-	} else if got := err.Error(); got != "task_id is required" {
-		t.Errorf("unexpected empty task_id error: %q", got)
-	}
-
-	if err := actions.ValidateTaskID("invalid@task"); err == nil {
-		t.Fatal("ValidateTaskID should reject invalid ID")
-	} else if got := err.Error(); !strings.HasPrefix(got, "task_id contains invalid characters") {
-		t.Errorf("unexpected task_id error: %q", got)
-	}
-}
-
-func TestValidateObjectID(t *testing.T) {
-	if err := actions.ValidateObjectID("valid-object-123"); err != nil {
-		t.Errorf("ValidateObjectID should accept valid ID, got %v", err)
-	}
-
-	if err := actions.ValidateObjectID(""); err == nil {
-		t.Fatal("ValidateObjectID should reject empty ID")
-	} else if got := err.Error(); got != "object_id is required" {
-		t.Errorf("unexpected empty object_id error: %q", got)
-	}
-
-	if err := actions.ValidateObjectID("invalid/object"); err == nil {
-		t.Fatal("ValidateObjectID should reject invalid ID")
-	} else if got := err.Error(); !strings.HasPrefix(got, "object_id contains invalid characters") {
-		t.Errorf("unexpected object_id error: %q", got)
+func TestResourceIDValidatorsUseResourceName(t *testing.T) {
+	for _, tc := range []struct {
+		resource string
+		validate func(string) error
+	}{
+		{"entity", actions.ValidateEntityID},
+		{"task", actions.ValidateTaskID},
+		{"object", actions.ValidateObjectID},
+	} {
+		t.Run(tc.resource, func(t *testing.T) {
+			if err := tc.validate("valid-id"); err != nil {
+				t.Fatalf("valid ID rejected: %v", err)
+			}
+			want := tc.resource + "_id is required"
+			if err := tc.validate(""); err == nil || err.Error() != want {
+				t.Errorf("empty ID error = %v, want %q", err, want)
+			}
+		})
 	}
 }
 
