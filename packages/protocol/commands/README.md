@@ -1,6 +1,6 @@
 # Command Catalog authoring
 
-Atlas Protocol owns every Command. The production catalog is generated from JSON namespace files in this directory; with no namespace files, generation publishes `[]`.
+Atlas Protocol owns every Command. The production catalog is generated from JSON namespace files in this directory. Generation publishes `[]` when no namespace files exist.
 
 Adding a Command is one cross-module change:
 

@@ -203,6 +203,10 @@ func TestTaskLifecycleStateMachine(t *testing.T) {
 		if changed, err = cancelTask(taskStateFixture(protocol.TaskStatusInProgress), queued, cancellableManifest, taskStateTestTime, cancellation); err != nil || !changed {
 			t.Fatalf("cancel supported in-progress Task = %t, %v", changed, err)
 		}
+		superseded := protocol.TaskCancellation{Code: protocol.TaskCancellationCodeSuperseded, Message: "replaced"}
+		if changed, err = cancelTask(taskStateFixture(protocol.TaskStatusInProgress), queued, protocol.CommandManifestEntry{}, taskStateTestTime, superseded); err != nil || !changed {
+			t.Fatalf("supersede in-progress Task without cancel support = %t, %v", changed, err)
+		}
 	})
 }
 

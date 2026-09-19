@@ -285,6 +285,29 @@
   color: var(--text-3);
   font-size: 12px;
 }
+
+.command-form {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.command-form h3 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.command-form__hint,
+.command-form__reference {
+  margin: 0;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.command-form__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
 .api-key-create {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

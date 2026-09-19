@@ -59,6 +59,28 @@ describe("AssetInspector", () => {
     vi.useRealTimers();
   });
 
+  it("shows flight telemetry when the Asset reports it", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-20T00:00:05Z"));
+    renderInspector(
+      entityFixture({
+        entity_id: "asset-1",
+        components: {
+          telemetry: {
+            armed: true,
+            flight_mode: "GUIDED",
+            launch_elevation_m: 560.5,
+            last_update: "2026-06-20T00:00:00Z"
+          }
+        }
+      })
+    );
+    expect(screen.getByText("Flight")).toBeInTheDocument();
+    expect(screen.getByText("GUIDED")).toBeInTheDocument();
+    expect(screen.getByText(/560.5 m MSL/)).toBeInTheDocument();
+    expect(screen.getByText(/Fresh · 5s ago/)).toBeInTheDocument();
+  });
+
   it("advances heartbeat and task ages without deriving unchanged task sections again", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-20T00:00:05Z"));
