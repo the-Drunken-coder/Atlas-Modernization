@@ -21,7 +21,7 @@ func TestUploadHeartbeatOwnershipLossCancelsBeforeMetadataCommit(t *testing.T) {
 	defer cancel()
 
 	objectID := fmt.Sprintf("heartbeat-loss-%d", time.Now().UTC().UnixNano())
-	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
+
 	storageClient := newCancelAwareObjectStorage()
 	storageClient.bucket = "atlas-upload-captured"
 	actions := NewObjectActions(pool, storageClient)
@@ -72,7 +72,6 @@ func TestUploadHeartbeatRetriesTransientRenewalFailure(t *testing.T) {
 	objectID := fmt.Sprintf("heartbeat-retry-%d", time.Now().UTC().UnixNano())
 	path := fmt.Sprintf("objects/%s/blob", objectID)
 	ownerID := uuid.NewString()
-	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
 
 	var originalExpiry time.Time
 	if err := pool.QueryRow(ctx, `
@@ -240,7 +239,6 @@ func TestReconcileStorageUploadIntentDeletesUnreferencedBlob(t *testing.T) {
 
 	objectID := fmt.Sprintf("orphan-upload-%d", time.Now().UTC().UnixNano())
 	path := fmt.Sprintf("objects/%s/blob", objectID)
-	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
 
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO storage_upload_intents
@@ -278,7 +276,6 @@ func TestReconcileStorageUploadIntentDeletesUnreferencedBlob(t *testing.T) {
 }
 
 func TestReconcileStorageUploadIntentRejectsLivePathWithoutBucket(t *testing.T) {
-	pool := openActionsTestPool(t)
 	for _, tt := range []struct {
 		name     string
 		metadata string
@@ -287,11 +284,11 @@ func TestReconcileStorageUploadIntentRejectsLivePathWithoutBucket(t *testing.T) 
 		{name: "blank", metadata: `{"bucket":" ","size_bytes":3}`},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			pool := openActionsTestPool(t)
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			objectID := fmt.Sprintf("invalid-live-upload-%s-%d", tt.name, time.Now().UTC().UnixNano())
 			path := fmt.Sprintf("objects/%s/blob", objectID)
-			defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
 
 			createStoredObjectFixture(ctx, t, pool, objectID, path)
 			if _, err := pool.Exec(ctx, `UPDATE objects SET json = $2::jsonb WHERE object_id = $1`, objectID, tt.metadata); err != nil {
@@ -332,7 +329,7 @@ func TestRecoverStorageUploadIntentLocksAdvisoryBeforeIntentRow(t *testing.T) {
 
 	objectID := fmt.Sprintf("intent-lock-order-%d", time.Now().UTC().UnixNano())
 	path := fmt.Sprintf("objects/%s/blob", objectID)
-	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
+
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO storage_upload_intents
 			(bucket, path, object_id, owner_id, expires_at, orphaned_at)
@@ -417,7 +414,6 @@ func TestReconcileStorageUploadIntentPreservesLiveBlob(t *testing.T) {
 
 	objectID := fmt.Sprintf("live-upload-%d", time.Now().UTC().UnixNano())
 	path := fmt.Sprintf("objects/%s/blob", objectID)
-	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
 
 	createStoredObjectFixture(ctx, t, pool, objectID, path)
 	if _, err := pool.Exec(ctx, `
@@ -455,7 +451,6 @@ func TestReconcileStorageUploadIntentLeavesActiveLease(t *testing.T) {
 
 	objectID := fmt.Sprintf("active-upload-%d", time.Now().UTC().UnixNano())
 	path := fmt.Sprintf("objects/%s/blob", objectID)
-	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
 
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO storage_upload_intents (bucket, path, object_id, owner_id, expires_at)
@@ -496,7 +491,6 @@ func TestUploadDoesNotResurrectObjectCreatedAndDeletedAfterMissingPreflight(t *t
 	initialPath := fmt.Sprintf("objects/%s/initial", objectID)
 	contentType := "text/plain"
 	sizeBytes := int64(3)
-	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
 
 	uploadErr := make(chan error, 1)
 	go func() {

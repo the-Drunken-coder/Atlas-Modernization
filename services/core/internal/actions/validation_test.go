@@ -54,6 +54,27 @@ func TestValidateResourceID(t *testing.T) {
 	}
 }
 
+func TestResourceIDValidatorsUseResourceName(t *testing.T) {
+	for _, tc := range []struct {
+		resource string
+		validate func(string) error
+	}{
+		{"entity", actions.ValidateEntityID},
+		{"task", actions.ValidateTaskID},
+		{"object", actions.ValidateObjectID},
+	} {
+		t.Run(tc.resource, func(t *testing.T) {
+			if err := tc.validate("valid-id"); err != nil {
+				t.Fatalf("valid ID rejected: %v", err)
+			}
+			want := tc.resource + "_id is required"
+			if err := tc.validate(""); err == nil || err.Error() != want {
+				t.Errorf("empty ID error = %v, want %q", err, want)
+			}
+		})
+	}
+}
+
 func TestValidateAlias(t *testing.T) {
 	tests := []struct {
 		name    string

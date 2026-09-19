@@ -35,7 +35,6 @@ func TestUpdateEntityValidatesFinalBlobBeforeUpdate(t *testing.T) {
 
 	actions := NewEntityActions(pool)
 	entityID := fmt.Sprintf("entity-final-blob-%d", time.Now().UTC().UnixNano())
-	defer cleanupFinalBlobValidationRowsWithTimeout(t, pool, entityID, "")
 
 	if _, err := actions.Create(ctx, CreateEntityParams{
 		EntityID:   entityID,
@@ -86,43 +85,6 @@ func openActionsTestPoolAtURL(t testing.TB, dbURL string) *pgxpool.Pool {
 		t.Fatalf("initialize isolated action test schema: %v", err)
 	}
 	return db.Pool
-}
-
-func cleanupFinalBlobValidationRows(ctx context.Context, t testing.TB, pool *pgxpool.Pool, entityID, taskID string) {
-	t.Helper()
-	if taskID != "" {
-		if _, err := pool.Exec(ctx, `DELETE FROM tasks WHERE task_id = $1`, taskID); err != nil {
-			t.Errorf("cleanup task row %q: %v", taskID, err)
-		}
-		if _, err := pool.Exec(ctx, `DELETE FROM atlas_change_events WHERE event->>'resource_type' = 'task' AND event->>'id' = $1`, taskID); err != nil {
-			t.Errorf("cleanup task change rows %q: %v", taskID, err)
-		}
-	}
-	if entityID != "" {
-		if _, err := pool.Exec(ctx, `DELETE FROM tasks WHERE asset_id = $1`, entityID); err != nil {
-			t.Errorf("cleanup tasks for entity %q: %v", entityID, err)
-		}
-		if _, err := pool.Exec(ctx, `DELETE FROM entities WHERE entity_id = $1`, entityID); err != nil {
-			t.Errorf("cleanup entity row %q: %v", entityID, err)
-		}
-		if _, err := pool.Exec(ctx, `DELETE FROM asset_runtime_generations WHERE asset_id = $1`, entityID); err != nil {
-			t.Errorf("cleanup runtime generations for entity %q: %v", entityID, err)
-		}
-		if _, err := pool.Exec(ctx, `
-			DELETE FROM atlas_change_events
-			WHERE (event->>'resource_type' = 'entity' AND event->>'id' = $1)
-				OR task_asset_id = $1
-		`, entityID); err != nil {
-			t.Errorf("cleanup entity change rows %q: %v", entityID, err)
-		}
-	}
-}
-
-func cleanupFinalBlobValidationRowsWithTimeout(t testing.TB, pool *pgxpool.Pool, entityID, taskID string) {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	cleanupFinalBlobValidationRows(ctx, t, pool, entityID, taskID)
 }
 
 func assertValidationDetailsContain(t *testing.T, err error, want string) {
