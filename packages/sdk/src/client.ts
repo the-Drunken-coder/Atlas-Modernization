@@ -3,8 +3,6 @@ import { FeedConnectionManager } from "./feed-connection.js";
 import { HttpTransport, resourceInstanceTokenHeaders } from "./http.js";
 import type {
   CommandCatalog,
-  EntityCheckInFullResponse,
-  EntityCheckInMinimalResponse,
   EntityCheckInRequest,
   EntityCheckInResponse,
   EntityCreateRequest,
@@ -71,8 +69,6 @@ export { ProtocolMismatchError } from "./feed-connection.js";
 export { AtlasAPIError, AtlasTransportError, ConflictError, isAtlasAPIError, isAtlasTransportError } from "./http.js";
 export type {
   ChangedSinceResponse,
-  EntityCheckInFullResponse,
-  EntityCheckInMinimalResponse,
   EntityCheckInRequest,
   EntityCheckInResponse,
   FullDatasetResponse,
@@ -83,7 +79,6 @@ export type {
   AtlasSubscription,
   AtlasWatchEvent,
   ChangedSinceQueryOptions,
-  EntityCheckInFields,
   EntityCheckInMethod,
   EntityCheckInOptions,
   EntityCheckInTelemetry,
@@ -514,10 +509,7 @@ function checkInRequest(id: string, options?: EntityCheckInOptions): { path: str
     if (speed_m_s !== undefined) body.speed_m_s = speed_m_s;
     if (heading_deg !== undefined) body.heading_deg = heading_deg;
   }
-  const fields = options?.fields === "minimal" ? "minimal" : undefined;
-  const path = pathWithQuery(`/entities/${encodeURIComponent(normalizedID)}/checkin`, {
-    fields
-  });
+  const path = `/entities/${encodeURIComponent(normalizedID)}/checkin`;
   return { path, body };
 }
 
@@ -544,12 +536,9 @@ function changedSinceQueryPath(sinceVersion: number, options?: ChangedSinceQuery
 }
 
 function createEntityCheckIn(engine: () => SyncEngine): EntityCheckInMethod {
-  function checkIn(id: string, options: EntityCheckInOptions<"minimal">): Promise<EntityCheckInMinimalResponse>;
-  function checkIn(id: string, options?: EntityCheckInOptions<"full">): Promise<EntityCheckInFullResponse>;
-  function checkIn(id: string, options?: EntityCheckInOptions): Promise<EntityCheckInResponse>;
   function checkIn(id: string, options?: EntityCheckInOptions): Promise<EntityCheckInResponse> {
     const { path, body } = checkInRequest(id, options);
-    return engine().checkInEntity(id, path, body, options?.fields ?? "full", options?.ifMatchVersion, options?.signal);
+    return engine().checkInEntity(id, path, body, options?.ifMatchVersion, options?.signal);
   }
   return checkIn;
 }

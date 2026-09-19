@@ -21,7 +21,7 @@ import (
 
 func TestTaskLifecycleRoutesWithFixtureCommands(t *testing.T) {
 	pool := openIsolatedFeedIntegrationPool(t)
-	handler := NewHandler(&atlasdb.DB{Pool: pool}, nil, zerolog.Nop(), &config.Config{})
+	handler := newConfiguredTestHandler(&atlasdb.DB{Pool: pool}, nil, zerolog.Nop(), &config.Config{})
 	catalog := taskingHandlerFixture[protocol.CommandCatalog](t, "catalog.json")
 	catalog = append(catalog, protocol.CommandDefinition{
 		Command:      "fixture.precision",

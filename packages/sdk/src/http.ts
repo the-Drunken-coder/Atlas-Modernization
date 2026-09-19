@@ -39,19 +39,19 @@ export class AtlasAPIError extends Error {
   readonly errorCode?: string;
   readonly details?: JSONValue;
 
-  constructor(message: string, status: number, response: unknown) {
+  constructor(message: string | undefined, status: number, response: unknown) {
     const safeResponse = safeErrorPayload(response);
-    super(sanitizeErrorMessage(message));
+    super(message === undefined ? errorMessage(status, safeResponse) : sanitizeErrorMessage(message));
     this.name = "AtlasAPIError";
     this.status = status;
     this.response = safeResponse;
-    this.errorCode = errorCodeFromPayload(safeResponse);
-    this.details = errorDetailsFromPayload(safeResponse);
+    this.errorCode = safeResponse?.error_code;
+    this.details = safeResponse?.details;
   }
 }
 
 export class ConflictError extends AtlasAPIError {
-  constructor(message: string, status: number, response: unknown) {
+  constructor(message: string | undefined, status: number, response: unknown) {
     super(message, status, response);
     this.name = "ConflictError";
   }
@@ -62,7 +62,7 @@ const ATLAS_TRANSPORT_ERROR_CODE = "ATLAS_TRANSPORT_ERROR";
 export class AtlasTransportError extends Error {
   readonly code = ATLAS_TRANSPORT_ERROR_CODE;
 
-  constructor(message: string) {
+  constructor(message: unknown) {
     super(sanitizeErrorMessage(message));
     this.name = "AtlasTransportError";
   }
@@ -215,13 +215,12 @@ export class HttpTransport {
     });
     signal?.throwIfAborted();
     if (!response.ok) {
-      const payload = safeErrorPayload(await readErrorPayload(response, signal));
+      const payload = await readErrorPayload(response, signal);
       signal?.throwIfAborted();
-      const message = errorMessage(response.status, payload);
       if (response.status === 409 || response.status === 412) {
-        throw new ConflictError(message, response.status, payload);
+        throw new ConflictError(undefined, response.status, payload);
       }
-      throw new AtlasAPIError(message, response.status, payload);
+      throw new AtlasAPIError(undefined, response.status, payload);
     }
     return response;
   }
@@ -233,9 +232,8 @@ export class HttpTransport {
       return response;
     } catch (error) {
       if (init.signal?.aborted) throw init.signal.reason;
-      const message = sanitizeErrorMessage(error);
       if (isAtlasTransportError(error)) throw error;
-      throw new AtlasTransportError(message);
+      throw new AtlasTransportError(error);
     }
   }
 
@@ -288,7 +286,7 @@ async function readSuccessfulJSON(response: Response, signal?: AbortSignal): Pro
 function throwTransportBodyError(error: unknown, signal?: AbortSignal): never {
   if (signal?.aborted) throw signal.reason;
   if (isAtlasTransportError(error)) throw error;
-  throw new AtlasTransportError(sanitizeErrorMessage(error));
+  throw new AtlasTransportError(error);
 }
 
 function strongETagVersion(etag: string | null): number | undefined {
@@ -310,8 +308,7 @@ async function readErrorPayload(response: Response, signal?: AbortSignal): Promi
   }
 }
 
-function errorMessage(status: number, payload: unknown): string {
-  const response = errorResponseFields(payload);
+function errorMessage(status: number, response: SafeErrorPayload | undefined): string {
   const code = response?.error_code;
   const message = response?.message;
   if (code && message) {
@@ -321,15 +318,6 @@ function errorMessage(status: number, payload: unknown): string {
     return `Atlas request failed: ${status}: ${message}`;
   }
   return `Atlas request failed: ${status}`;
-}
-
-function errorCodeFromPayload(payload: unknown): string | undefined {
-  return errorResponseFields(payload)?.error_code;
-}
-
-function errorDetailsFromPayload(payload: unknown): JSONValue | undefined {
-  if (typeof payload !== "object" || payload === null || !("details" in payload)) return undefined;
-  return sanitizeErrorDetails(payload.details);
 }
 
 function errorResponseFields(payload: unknown): { error_code?: string; message?: string } | undefined {
@@ -349,7 +337,9 @@ function errorResponseFields(payload: unknown): { error_code?: string; message?:
   };
 }
 
-function safeErrorPayload(payload: unknown): unknown {
+type SafeErrorPayload = { success?: false; error_code?: string; message?: string; details?: JSONValue };
+
+function safeErrorPayload(payload: unknown): SafeErrorPayload | undefined {
   const fields = errorResponseFields(payload);
   if (!fields) return undefined;
   const success =

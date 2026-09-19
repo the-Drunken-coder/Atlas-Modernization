@@ -122,6 +122,12 @@ func TestBuildPoolConfigClampsMinConnsWhenGreaterThanMaxConns(t *testing.T) {
 	}
 }
 
+func TestCloseHandlesNilPool(t *testing.T) {
+	db := &DB{}
+
+	db.Close()
+}
+
 func TestScratchDataResetClearsResourcesOnly(t *testing.T) {
 	ddl := strings.Join(scratchDataResetDDL(), "\n")
 	for _, table := range []string{"storage_upload_intents", "storage_deletion_outbox", "object_deletion_fences", "resource_instance_tokens", "tasks", "entities", "objects", "atlas_change_events"} {

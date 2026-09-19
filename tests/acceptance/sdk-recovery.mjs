@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { appendFileSync } from "node:fs";
+import { join } from "node:path";
 import { AtlasClient, isAtlasAPIError } from "@the-drunken-coder/atlas-sdk";
 import { runAcceptance } from "./support/stack.mjs";
 
@@ -16,7 +18,7 @@ const reproduction =
 await runAcceptance({
   name: "sdk-recovery",
   reproduction,
-  run: async ({ baseUrl, apiKey, record, restartCore, runID, signal }) => {
+  run: async ({ baseUrl, apiKey, record, restartCore, runID, signal, artifacts }) => {
     const NativeWebSocket = globalThis.WebSocket;
     if (typeof NativeWebSocket !== "function") {
       record({
@@ -42,32 +44,26 @@ await runAcceptance({
       WebSocket: gate.WebSocket,
     });
     const scenarioStartedAt = Date.now();
+    const log = (event) => appendFileSync(
+      join(artifacts, "recovery-events.jsonl"),
+      `${JSON.stringify({ timestamp: new Date().toISOString(), ...event })}\n`,
+    );
     const timeline = (phase, actual, cycle) =>
-      record({
-        check: `recovery timeline: ${phase}`,
+      log({
+        event: "recovery milestone",
         phase,
         ...(cycle === undefined ? {} : { cycle }),
         elapsed_ms: Date.now() - scenarioStartedAt,
-        actual,
-        passed: true,
+        observation: actual,
       });
 
-    record({
-      check: "recovery scenario parameters",
-      expected: {
-        recovery_cycles: recoveryCycles,
-        disconnect_timeout_ms: disconnectTimeoutMs,
-        reconnect_attempt_timeout_ms: reconnectAttemptTimeoutMs,
-        convergence_timeout_ms: convergenceTimeoutMs,
-      },
-      actual: {
-        recovery_cycles: recoveryCycles,
-        disconnect_timeout_ms: disconnectTimeoutMs,
-        reconnect_attempt_timeout_ms: reconnectAttemptTimeoutMs,
-        convergence_timeout_ms: convergenceTimeoutMs,
-        run_id: runID,
-      },
-      passed: true,
+    log({
+      event: "recovery scenario parameters",
+      recovery_cycles: recoveryCycles,
+      disconnect_timeout_ms: disconnectTimeoutMs,
+      reconnect_attempt_timeout_ms: reconnectAttemptTimeoutMs,
+      convergence_timeout_ms: convergenceTimeoutMs,
+      run_id: runID,
     });
 
     try {
