@@ -33,9 +33,9 @@ const budgets = {
   milsymbolJavaScript: { raw: 900_000, gzip: 240_000 },
   mapLibreCss: { raw: 85_000, gzip: 11_000 },
   mapRoute: { raw: 2_100_000, gzip: 550_000 },
-  // Flight forms bring the combined build to 3,725.14 kB raw / 1,032.25 kB gzip.
-  // Retain a small allowance for Linux zlib variance.
-  allJavaScript: { raw: 3_726_000, gzip: 1_033_000 },
+  // Flight forms bring the combined local build to 3,725.14 kB raw / 1,032.25 kB gzip.
+  // Linux zlib measures 1,033.77 kB gzip, so retain a 0.23 kB platform margin.
+  allJavaScript: { raw: 3_726_000, gzip: 1_034_000 },
   // The form controls bring the combined stylesheet to 603.13 kB raw.
   allCss: { raw: 604_000, gzip: 67_000 }
 };

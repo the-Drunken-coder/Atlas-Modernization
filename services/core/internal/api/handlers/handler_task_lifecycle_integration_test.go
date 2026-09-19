@@ -47,10 +47,10 @@ func TestEntityCheckinMergesFlatAndComponentTelemetry(t *testing.T) {
 	if !ok {
 		t.Fatalf("telemetry component = %T, want object", response.Entity.Components["telemetry"])
 	}
-	if telemetry["latitude"] != 38.5 || telemetry["heading_deg"] != 91.25 {
+	if telemetry["latitude"] != json.Number("38.5") || telemetry["heading_deg"] != json.Number("91.25") {
 		t.Fatalf("flat telemetry fields did not override component values: %#v", telemetry)
 	}
-	if telemetry["armed"] != true || telemetry["flight_mode"] != "GUIDED" || telemetry["launch_elevation_m"] != 575.0 {
+	if telemetry["armed"] != true || telemetry["flight_mode"] != "GUIDED" || telemetry["launch_elevation_m"] != json.Number("575") {
 		t.Fatalf("host flight telemetry was not preserved: %#v", telemetry)
 	}
 	if _, ok := telemetry["last_update"].(string); !ok {
