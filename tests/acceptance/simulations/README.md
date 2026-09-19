@@ -5,9 +5,9 @@ Run the simulation journeys from the repository root with Node 24 and a running 
 ```sh
 npm ci
 npm run build:sdk && node tests/acceptance/simulations/moving-assets.mjs
-npm run build:sdk && node --import ./simulations/node_modules/tsx/dist/loader.mjs tests/acceptance/simulations/observations-objects.mjs
-npm run build:sdk && node --import ./simulations/node_modules/tsx/dist/loader.mjs tests/acceptance/simulations/multi-client-sync.mjs
-npm run build:sdk && node --import ./simulations/node_modules/tsx/dist/loader.mjs tests/acceptance/simulations/observations-late-assertions.mjs
+npm run build:sdk && node tests/acceptance/simulations/observations-objects.mjs
+npm run build:sdk && node tests/acceptance/simulations/multi-client-sync.mjs
+npm run build:sdk && node tests/acceptance/simulations/observations-late-assertions.mjs
 ```
 
 Each invocation starts a disposable Atlas Core, PostgreSQL, and MinIO stack. It then uses a test-only launcher to construct the actual simulations server factory on a loopback port reserved for each bounded startup attempt with the built workspace SDK. It retries only a recognized `EADDRINUSE` startup exit. The launcher loads its configuration and cleanup ledger from a runner-owned temporary package root, so it does not read or alter `simulations/.env` or its ledger. It links built simulation assets only when they already exist; these API-and-SDK journeys do not build or verify browser assets. The browser acceptance journey covers those assets. It records the actual isolated ledger path before fixture cleanup, verifies that exactly the `local` target is exposed without deployed credentials, and tears down only its generated Compose project and child process.

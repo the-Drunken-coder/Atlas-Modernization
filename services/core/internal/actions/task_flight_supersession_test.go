@@ -3,11 +3,13 @@ package actions
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
 )
 
@@ -23,7 +25,7 @@ func flightTestManifest() protocol.CommandManifest {
 	}
 }
 
-func setupFlightAsset(t *testing.T, ctx context.Context, assetID string) *TaskActions {
+func setupFlightAsset(ctx context.Context, t *testing.T, assetID string) *TaskActions {
 	t.Helper()
 	pool := openActionsTestPool(t)
 	t.Cleanup(func() { cleanupFinalBlobValidationRowsWithTimeout(t, pool, assetID, "") })
@@ -60,7 +62,7 @@ func flightEmptyInput() map[string]any {
 	return map[string]any{}
 }
 
-func flightTaskCancellation(t *testing.T, tasks *TaskActions, ctx context.Context, taskID string) (string, protocol.TaskCancellation) {
+func flightTaskCancellation(ctx context.Context, t *testing.T, tasks *TaskActions, taskID string) (string, protocol.TaskCancellation) {
 	t.Helper()
 	task, err := tasks.Get(ctx, taskID)
 	if err != nil {
@@ -75,10 +77,47 @@ func flightTaskCancellation(t *testing.T, tasks *TaskActions, ctx context.Contex
 	return task.Status, cancellation
 }
 
+type flightTestRow struct {
+	err error
+}
+
+func (r flightTestRow) Scan(...any) error {
+	return r.err
+}
+
+type flightTestTx struct {
+	pgx.Tx
+	row pgx.Row
+}
+
+func (tx flightTestTx) QueryRow(context.Context, string, ...any) pgx.Row {
+	return tx.row
+}
+
+func TestFlightTaskPolicyNoDatabaseBranches(t *testing.T) {
+	ctx := t.Context()
+	if err := rejectGotoDuringTakeoff(ctx, nil, "asset-1", "runtime-1", "flight.land"); err != nil {
+		t.Fatalf("non-go-to rejection check = %v, want nil", err)
+	}
+	if err := rejectGotoDuringTakeoff(ctx, flightTestTx{row: flightTestRow{err: pgx.ErrNoRows}}, "asset-1", "runtime-1", "flight.goto"); err != nil {
+		t.Fatalf("go-to without active takeoff = %v, want nil", err)
+	}
+	queryErr := errors.New("query failed")
+	if err := rejectGotoDuringTakeoff(ctx, flightTestTx{row: flightTestRow{err: queryErr}}, "asset-1", "runtime-1", "flight.goto"); !errors.Is(err, queryErr) {
+		t.Fatalf("go-to query error = %v, want wrapped query failure", err)
+	}
+	if err := rejectGotoDuringTakeoff(ctx, flightTestTx{row: flightTestRow{}}, "asset-1", "runtime-1", "flight.goto"); err == nil {
+		t.Fatal("go-to with active takeoff was accepted")
+	}
+	if err := supersedeReplacedFlightTasks(ctx, nil, "asset-1", "runtime-1", "flight.takeoff", "task-new"); err != nil {
+		t.Fatalf("non-superseding flight Command = %v, want nil", err)
+	}
+}
+
 func TestFlightGotoSupersedesActiveGoto(t *testing.T) {
 	ctx := flightTestContext(t)
 	assetID := fmt.Sprintf("flight-goto-%d", time.Now().UnixNano())
-	tasks := setupFlightAsset(t, ctx, assetID)
+	tasks := setupFlightAsset(ctx, t, assetID)
 
 	first, _, err := tasks.Create(ctx, CreateTaskParams{AssetID: assetID, Command: "flight.goto", Input: flightGotoInput()}, "goto-first")
 	if err != nil {
@@ -91,21 +130,21 @@ func TestFlightGotoSupersedesActiveGoto(t *testing.T) {
 	if err != nil || !created {
 		t.Fatalf("create second go-to = %t, %v", created, err)
 	}
-	if status, cancellation := flightTaskCancellation(t, tasks, ctx, first.TaskID); status != string(protocol.TaskStatusCancelled) {
+	if status, cancellation := flightTaskCancellation(ctx, t, tasks, first.TaskID); status != string(protocol.TaskStatusCancelled) {
 		t.Fatalf("first go-to status = %q, want cancelled", status)
 	} else if cancellation.Code != protocol.TaskCancellationCodeSuperseded {
 		t.Fatalf("first go-to cancellation code = %q, want superseded", cancellation.Code)
 	} else if !strings.Contains(cancellation.Message, second.TaskID) {
 		t.Fatalf("first go-to cancellation message %q does not reference %s", cancellation.Message, second.TaskID)
 	}
-	if status, _ := flightTaskCancellation(t, tasks, ctx, second.TaskID); status != string(protocol.TaskStatusPending) {
+	if status, _ := flightTaskCancellation(ctx, t, tasks, second.TaskID); status != string(protocol.TaskStatusPending) {
 		t.Fatalf("second go-to status = %q, want pending", status)
 	}
 	repeated, created, err := tasks.Create(ctx, CreateTaskParams{AssetID: assetID, Command: "flight.goto", Input: flightGotoInput()}, "goto-second")
 	if err != nil || created || repeated.TaskID != second.TaskID {
 		t.Fatalf("idempotent create = %v, %t, %v", repeated.TaskID, created, err)
 	}
-	if status, _ := flightTaskCancellation(t, tasks, ctx, second.TaskID); status != string(protocol.TaskStatusPending) {
+	if status, _ := flightTaskCancellation(ctx, t, tasks, second.TaskID); status != string(protocol.TaskStatusPending) {
 		t.Fatalf("second go-to status after retry = %q, want pending", status)
 	}
 }
@@ -113,7 +152,7 @@ func TestFlightGotoSupersedesActiveGoto(t *testing.T) {
 func TestFlightRecoverySupersedesTakeoffAndGoto(t *testing.T) {
 	ctx := flightTestContext(t)
 	assetID := fmt.Sprintf("flight-recovery-%d", time.Now().UnixNano())
-	tasks := setupFlightAsset(t, ctx, assetID)
+	tasks := setupFlightAsset(ctx, t, assetID)
 
 	takeoff, _, err := tasks.Create(ctx, CreateTaskParams{AssetID: assetID, Command: "flight.takeoff", Input: flightTakeoffInput()}, "takeoff-active")
 	if err != nil {
@@ -129,7 +168,7 @@ func TestFlightRecoverySupersedesTakeoffAndGoto(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create RTL: %v", err)
 	}
-	if status, cancellation := flightTaskCancellation(t, tasks, ctx, takeoff.TaskID); status != string(protocol.TaskStatusCancelled) {
+	if status, cancellation := flightTaskCancellation(ctx, t, tasks, takeoff.TaskID); status != string(protocol.TaskStatusCancelled) {
 		t.Fatalf("takeoff status = %q, want cancelled", status)
 	} else if cancellation.Code != protocol.TaskCancellationCodeSuperseded {
 		t.Fatalf("takeoff cancellation code = %q, want superseded", cancellation.Code)
@@ -149,15 +188,15 @@ func TestFlightRecoverySupersedesTakeoffAndGoto(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create land: %v", err)
 	}
-	if status, cancellation := flightTaskCancellation(t, tasks, ctx, gotoTask.TaskID); status != string(protocol.TaskStatusCancelled) {
+	if status, cancellation := flightTaskCancellation(ctx, t, tasks, gotoTask.TaskID); status != string(protocol.TaskStatusCancelled) {
 		t.Fatalf("go-to status = %q, want cancelled", status)
 	} else if cancellation.Code != protocol.TaskCancellationCodeSuperseded {
 		t.Fatalf("go-to cancellation code = %q, want superseded", cancellation.Code)
 	}
-	if status, _ := flightTaskCancellation(t, tasks, ctx, rtl.TaskID); status != string(protocol.TaskStatusInProgress) {
+	if status, _ := flightTaskCancellation(ctx, t, tasks, rtl.TaskID); status != string(protocol.TaskStatusInProgress) {
 		t.Fatalf("RTL status = %q, want in_progress", status)
 	}
-	if status, _ := flightTaskCancellation(t, tasks, ctx, land.TaskID); status != string(protocol.TaskStatusPending) {
+	if status, _ := flightTaskCancellation(ctx, t, tasks, land.TaskID); status != string(protocol.TaskStatusPending) {
 		t.Fatalf("land status = %q, want pending", status)
 	}
 }
@@ -165,7 +204,7 @@ func TestFlightRecoverySupersedesTakeoffAndGoto(t *testing.T) {
 func TestFlightTakeoffDoesNotSupersedeGoto(t *testing.T) {
 	ctx := flightTestContext(t)
 	assetID := fmt.Sprintf("flight-nosup-%d", time.Now().UnixNano())
-	tasks := setupFlightAsset(t, ctx, assetID)
+	tasks := setupFlightAsset(ctx, t, assetID)
 
 	gotoTask, _, err := tasks.Create(ctx, CreateTaskParams{AssetID: assetID, Command: "flight.goto", Input: flightGotoInput()}, "goto-kept")
 	if err != nil {
@@ -178,10 +217,10 @@ func TestFlightTakeoffDoesNotSupersedeGoto(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create takeoff: %v", err)
 	}
-	if status, _ := flightTaskCancellation(t, tasks, ctx, gotoTask.TaskID); status != string(protocol.TaskStatusInProgress) {
+	if status, _ := flightTaskCancellation(ctx, t, tasks, gotoTask.TaskID); status != string(protocol.TaskStatusInProgress) {
 		t.Fatalf("go-to status = %q, want in_progress", status)
 	}
-	if status, _ := flightTaskCancellation(t, tasks, ctx, takeoff.TaskID); status != string(protocol.TaskStatusPending) {
+	if status, _ := flightTaskCancellation(ctx, t, tasks, takeoff.TaskID); status != string(protocol.TaskStatusPending) {
 		t.Fatalf("takeoff status = %q, want pending", status)
 	}
 }
@@ -189,7 +228,7 @@ func TestFlightTakeoffDoesNotSupersedeGoto(t *testing.T) {
 func TestFlightGotoDuringTakeoffIsRejected(t *testing.T) {
 	ctx := flightTestContext(t)
 	assetID := fmt.Sprintf("flight-goto-takeoff-%d", time.Now().UnixNano())
-	tasks := setupFlightAsset(t, ctx, assetID)
+	tasks := setupFlightAsset(ctx, t, assetID)
 
 	takeoff, _, err := tasks.Create(ctx, CreateTaskParams{AssetID: assetID, Command: "flight.takeoff", Input: flightTakeoffInput()}, "takeoff-blocks-goto")
 	if err != nil {
@@ -203,7 +242,7 @@ func TestFlightGotoDuringTakeoffIsRejected(t *testing.T) {
 	} else if !strings.Contains(err.Error(), "takeoff") {
 		t.Fatalf("go-to during takeoff error = %v, want takeoff rejection", err)
 	}
-	if status, _ := flightTaskCancellation(t, tasks, ctx, takeoff.TaskID); status != string(protocol.TaskStatusInProgress) {
+	if status, _ := flightTaskCancellation(ctx, t, tasks, takeoff.TaskID); status != string(protocol.TaskStatusInProgress) {
 		t.Fatalf("takeoff status = %q, want in_progress", status)
 	}
 }
@@ -211,7 +250,7 @@ func TestFlightGotoDuringTakeoffIsRejected(t *testing.T) {
 func TestFlightCommandInputValidation(t *testing.T) {
 	ctx := flightTestContext(t)
 	assetID := fmt.Sprintf("flight-input-%d", time.Now().UnixNano())
-	tasks := setupFlightAsset(t, ctx, assetID)
+	tasks := setupFlightAsset(ctx, t, assetID)
 
 	cases := []struct {
 		name        string

@@ -60,16 +60,10 @@ describe("entity accessors", () => {
   it("treats only recent telemetry as fresh enough to prefill altitude", () => {
     const now = Date.parse("2026-06-20T00:10:00Z");
     expect(
-      telemetryInputFresh(
-        entity({ components: { telemetry: { last_update: "2026-06-20T00:09:55Z" } } }),
-        now
-      )
+      telemetryInputFresh(entity({ components: { telemetry: { last_update: "2026-06-20T00:09:55Z" } } }), now)
     ).toBe(true);
     expect(
-      telemetryInputFresh(
-        entity({ components: { telemetry: { last_update: "2026-06-20T00:09:00Z" } } }),
-        now
-      )
+      telemetryInputFresh(entity({ components: { telemetry: { last_update: "2026-06-20T00:09:00Z" } } }), now)
     ).toBe(false);
     expect(telemetryInputFresh(entity({ components: {} }), now)).toBe(false);
   });

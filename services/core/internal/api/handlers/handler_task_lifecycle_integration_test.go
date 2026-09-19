@@ -19,6 +19,45 @@ import (
 	atlasdb "github.com/the-drunken-coder/atlas/services/core/internal/database"
 )
 
+func TestEntityCheckinMergesFlatAndComponentTelemetry(t *testing.T) {
+	pool := openIsolatedFeedIntegrationPool(t)
+	handler := NewHandler(&atlasdb.DB{Pool: pool}, nil, zerolog.Nop(), &config.Config{})
+	assetID := "handler-checkin-" + time.Now().UTC().Format("20060102150405.000000000")
+	if _, err := handler.entityActions.Create(t.Context(), actions.CreateEntityParams{EntityID: assetID, EntityType: "asset"}); err != nil {
+		t.Fatalf("create Asset: %v", err)
+	}
+
+	router := chi.NewRouter()
+	router.Post("/entities/{entity_id}/checkin", handler.EntityCheckin)
+	var response protocol.EntityCheckInFullResponse
+	requestTaskingRoute(t, router, http.MethodPost, "/entities/"+assetID+"/checkin", map[string]any{
+		"latitude":    38.5,
+		"heading_deg": 91.25,
+		"components": map[string]any{
+			"telemetry": map[string]any{
+				"armed":              true,
+				"flight_mode":        "GUIDED",
+				"launch_elevation_m": 575.0,
+				"latitude":           0.0,
+			},
+		},
+	}, nil, http.StatusOK, &response)
+
+	telemetry, ok := response.Entity.Components["telemetry"].(map[string]any)
+	if !ok {
+		t.Fatalf("telemetry component = %T, want object", response.Entity.Components["telemetry"])
+	}
+	if telemetry["latitude"] != 38.5 || telemetry["heading_deg"] != 91.25 {
+		t.Fatalf("flat telemetry fields did not override component values: %#v", telemetry)
+	}
+	if telemetry["armed"] != true || telemetry["flight_mode"] != "GUIDED" || telemetry["launch_elevation_m"] != 575.0 {
+		t.Fatalf("host flight telemetry was not preserved: %#v", telemetry)
+	}
+	if _, ok := telemetry["last_update"].(string); !ok {
+		t.Fatalf("telemetry last_update = %#v, want timestamp", telemetry["last_update"])
+	}
+}
+
 func TestTaskLifecycleRoutesWithFixtureCommands(t *testing.T) {
 	pool := openIsolatedFeedIntegrationPool(t)
 	handler := NewHandler(&atlasdb.DB{Pool: pool}, nil, zerolog.Nop(), &config.Config{})

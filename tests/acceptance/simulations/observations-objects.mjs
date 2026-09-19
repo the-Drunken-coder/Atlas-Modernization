@@ -43,7 +43,7 @@ import {
 } from "./support/sse-response-contract.mjs";
 
 const reproduction =
-  "npm run build:sdk && node --import ./simulations/node_modules/tsx/dist/loader.mjs tests/acceptance/simulations/observations-objects.mjs";
+  "npm run build:sdk && node tests/acceptance/simulations/observations-objects.mjs";
 const scenarioID = "observations-objects";
 const nightly = process.env.ATLAS_ACCEPTANCE_NIGHTLY === "1";
 const normalInputs = {
