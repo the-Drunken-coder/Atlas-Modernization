@@ -472,12 +472,12 @@ export class SyncEngine {
         undefined,
         signal
       );
+      assertExpectedResourceID(type, id, resource);
     } catch (error) {
       if (isResourceNotFound(error, type) && this.cache.applyPointNotFound(pointRead)) this.notifySnapshot();
       else if (this.cache.completePointRead(pointRead)) this.notifySnapshot();
       throw error;
     }
-    assertExpectedResourceID(type, id, resource);
     if (this.cache.applyPointRead(pointRead, resource, cacheOptions)) this.notifySnapshot();
     return resource;
   }
