@@ -709,9 +709,9 @@ export class SyncEngine {
         );
       }
       snapshotVersion = responseVersion;
-      entities.push(...(response.entities ?? []));
-      tasks.push(...(response.tasks ?? []));
-      objects.push(...(response.objects ?? []));
+      entities.push(...response.entities);
+      tasks.push(...response.tasks);
+      objects.push(...response.objects);
       cursors = nextFullDatasetCursors(response);
       assertPaginationProgress("full-dataset", cursors, seenCursors);
     } while (hasMoreFullDataset(cursors));
