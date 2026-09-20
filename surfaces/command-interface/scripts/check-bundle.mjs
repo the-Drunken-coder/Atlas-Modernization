@@ -25,8 +25,11 @@ const budgets = {
   // command fixes, and draft lifecycle.
   shellJavaScript: { raw: 162_000, gzip: 52_000 },
   // Includes live drawing previews, keyboard vertex controls, focus restoration,
-  // heartbeat-qualified symbols, and the first-vertex close control.
-  mapViewJavaScript: { raw: 76_000, gzip: 23_500 },
+  // heartbeat-qualified symbols, the first-vertex close control, and the
+  // directional-navigation traversal. Keep the small raw-size allowance
+  // explicit: the optimized traversal avoids repeated layout scans, while its
+  // emitted selection logic measures 76.14 kB in the pinned production build.
+  mapViewJavaScript: { raw: 76_500, gzip: 23_500 },
   mapLibreJavaScript: { raw: 1_100_000, gzip: 300_000 },
   mapLibreWorkerJavaScript: { raw: 500_000, gzip: 140_000 },
   milsymbolJavaScript: { raw: 900_000, gzip: 240_000 },
