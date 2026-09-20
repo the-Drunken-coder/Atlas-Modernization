@@ -6,6 +6,7 @@ Keep only durable, non-obvious repository constraints here; report surprises and
 
 - Atlas is greenfield, with no users or production data. Understand affected behavior and constraints, then choose the simplest design meeting required functionality and performance. Avoid compatibility shims, duplicated paths, speculative abstractions, and unrelated refactors. Prefer direct code unless helpers improve clarity, error handling, or existing reuse.
 - Challenge unnecessary complexity. During planning, propose broader alternatives with scope and tradeoffs, but obtain approval before expanding implementation scope.
+- Before finishing a fix, remove superseded guards, helpers, tests, and documentation from abandoned approaches. Do not add a regression test or documentation merely because code changed; preserve only distinct behavior, contracts, or non-obvious invariants.
 - Treat documentation as a constraint. Cite conflicts and ask whether to preserve or supersede the documented direction. Update every affected document and design decision when direction changes.
 - Ask about ambiguous UI selection, focus, hover, keyboard, or pointer behavior; confirm user-visible precedence.
 - Edit source, examples, templates, or generators, not disposable outputs/configuration: `node_modules/`, `dist/`, `storybook-static/`, `.wrangler/`, `worker-configuration.d.ts`, or `services/core/docker/.env`.
