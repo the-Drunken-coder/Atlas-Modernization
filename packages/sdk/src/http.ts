@@ -215,7 +215,7 @@ export class HttpTransport {
     });
     signal?.throwIfAborted();
     if (!response.ok) {
-      const payload = safeErrorPayload(await readErrorPayload(response, signal));
+      const payload = await readErrorPayload(response, signal);
       signal?.throwIfAborted();
       const message = errorMessage(response.status, payload);
       if (response.status === 409 || response.status === 412) {
