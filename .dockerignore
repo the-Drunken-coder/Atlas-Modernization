@@ -34,8 +34,6 @@
 !packages/sdk/tsconfig.json
 !packages/sdk/src/
 !packages/sdk/src/**
-!packages/sdk/scripts/
-!packages/sdk/scripts/**
 !packages/plugin-runtime/
 !packages/plugin-runtime/package.json
 !packages/plugin-runtime/tsconfig.json

@@ -79,7 +79,7 @@ type OperationContext<Operation extends AtlasRadioOperationName> = Operation ext
       : Operation extends "entity.inspect_movement"
         ? { target_id: string; entity_created_at: string; at: string }
         : Operation extends "entity.check_in"
-          ? { target_id: string; fields?: "full" | "minimal" }
+          ? { target_id: string }
           : Operation extends "task.acknowledge" | "task.start" | "task.progress" | "task.complete" | "task.fail"
             ? { target_id: string; runtime_id: string }
             : Operation extends "runtime.begin" | "runtime.stop" | "runtime.ready"

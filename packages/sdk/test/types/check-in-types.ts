@@ -2,8 +2,6 @@ import {
   type AtlasClient,
   type ChangedSinceResponse,
   type Classification,
-  type EntityCheckInFullResponse,
-  type EntityCheckInMinimalResponse,
   type EntityCheckInOptions,
   type EntityCheckInRequest,
   type EntityCheckInResponse,
@@ -26,9 +24,7 @@ declare const client: AtlasClient;
 declare const unresolvedOptions: EntityCheckInOptions;
 declare const unknownValue: unknown;
 
-const minimal: Promise<EntityCheckInMinimalResponse> = client.entities.checkIn("asset-1", { fields: "minimal" });
-const full: Promise<EntityCheckInFullResponse> = client.entities.checkIn("asset-1");
-const explicitFull: Promise<EntityCheckInFullResponse> = client.entities.checkIn("asset-1", { fields: "full" });
+const checkIn: Promise<EntityCheckInResponse> = client.entities.checkIn("asset-1");
 const unresolved: Promise<EntityCheckInResponse> = client.entities.checkIn("asset-1", unresolvedOptions);
 const resourceTypes: readonly ResourceType[] = RESOURCE_TYPE_VALUES;
 
@@ -56,4 +52,4 @@ if (isResourceType(unknownValue)) {
   void resourceType;
 }
 
-void [minimal, full, explicitFull, unresolved, resourceTypes, publicTypes];
+void [checkIn, unresolved, resourceTypes, publicTypes];

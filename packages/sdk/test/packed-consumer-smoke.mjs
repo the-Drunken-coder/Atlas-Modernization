@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 const PACKAGE_INSTALL_TIMEOUT_MS = 180_000;
@@ -346,6 +346,20 @@ void [clientConstructor, adminConstructor, revision, entity, apiKey, validTask, 
       }
     )
   );
+
+  const cliApplicationURL = pathToFileURL(join(dirname(atlasCLI), "cli-application.js")).href;
+  const cliImportOutput = runCombined(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `process.argv[1] = "cli.js"; const { runCLI } = await import(${JSON.stringify(cliApplicationURL)}); console.log(typeof runCLI);`
+    ],
+    { cwd: projectDir }
+  );
+  if (cliImportOutput.trim() !== "function") {
+    throw new Error(`importing the CLI application executed a command: ${cliImportOutput}`);
+  }
 
   const helpOutput = runCombined(process.execPath, [atlasCLI, "--help"], { cwd: projectDir });
   if (!/usage: atlas/i.test(helpOutput)) {

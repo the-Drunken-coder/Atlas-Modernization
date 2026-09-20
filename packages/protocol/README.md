@@ -40,3 +40,13 @@ semantic checks that draft 2020-12 JSON Schema cannot express.
 The reusable Go package lives under `generated/go/atlasprotocol` and is intended for multiple consumers. Its `types.go` file is authored for Go ergonomics, while `go run ./tools/check` derives the supported wire shapes and enums from the canonical schema and fails if that public API drifts. Atlas Core consumes this module through a local `replace` during development; protocol code should not move under `services/core/internal/`.
 
 Generated validators, TypeScript, and revision files are checked in and marked `DO NOT EDIT`; update `schema/jsonschema/atlas.schema.json` and rerun `go run ./tools/generate`. Update authored `types.go` alongside schema changes when the parity check identifies a Go API change.
+
+`FixtureInput` and `FixtureOutput` intentionally remain in the canonical schema while
+the production Command Catalog is empty. The shared Go and TypeScript conformance
+catalog uses these two definitions to exercise schema resolution and the real Task
+engine. Validation compiles one embedded schema bundle; introducing a separate
+fixture overlay would add another loading path for two small definitions. These
+types therefore appear in generated public artifacts and contribute to the Protocol
+revision, but do not register executable production Commands. Revisit this boundary
+when real Command schemas can replace the fixture dependency or schema bundles
+need independent loading for another requirement.

@@ -124,7 +124,7 @@ Higher-level functions (multiple endpoints, or one endpoint with opinionated def
 
 `client.runtime.begin`, `ready`, `stop`, and `tasks` expose process registration, manifest publication, explicit deactivation, and runtime-scoped delivery. `begin`, `ready`, and `stop` carry the runtime ID in their request bodies; `tasks` carries it in `Atlas-Runtime-ID`. A missing or stale stop is an idempotent Core no-op. The SDK does not infer process restarts from transport reconnects.
 
-`client.entities.checkIn` is the telemetry and observed-state reporting path. It accepts telemetry, operational status, component updates, and an optional `AbortSignal`, refreshes the entity heartbeat through Core, and returns the updated Entity only. `client.handshake` accepts the same lifecycle signal. Full/default check-in calls return the generated `EntityCheckInFullResponse`; `fields: "minimal"` returns `EntityCheckInMinimalResponse`; unresolved option unions return the generated non-generic `EntityCheckInResponse` union. Task delivery is separate and runtime-scoped.
+`client.entities.checkIn` is the telemetry and observed-state reporting path. It accepts telemetry, operational status, component updates, and an optional `AbortSignal`, refreshes the entity heartbeat through Core, and returns the updated Entity only. `client.handshake` accepts the same lifecycle signal. Check-in returns the generated `EntityCheckInResponse` containing the updated Entity. Task delivery is separate and runtime-scoped.
 
 `client.queries.full` and `client.queries.changedSince` expose typed one-page wrappers over the existing query endpoints. They intentionally do not mutate sync state or fire watchers; the sync engine manages its own reconciliation cursor.
 

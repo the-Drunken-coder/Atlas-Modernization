@@ -87,6 +87,20 @@ describe("AtlasClient HTTP", () => {
     expect(JSON.stringify(failure)).not.toContain(secret);
     expect((failure as Error).message).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
   });
+  it.each([AtlasAPIError, ConflictError])("sanitizes directly constructed %s errors", (ErrorType) => {
+    const secret = "direct-api-canary-secret";
+    const failure = new ErrorType(`Bearer ${secret}`, 409, {
+      error_code: "CONFLICT",
+      message: `https://user:${secret}@core.test`,
+      details: { nested: [{ api_key: secret }], safe: "visible" }
+    });
+
+    expect(failure.message).not.toContain(secret);
+    expect(JSON.stringify(failure)).not.toContain(secret);
+    expect(failure.details).toEqual({ nested: [{ api_key: "[redacted]" }], safe: "visible" });
+    expect(failure.response).toMatchObject({ error_code: "CONFLICT", details: failure.details });
+  });
+
   it("binds the default global fetch for browser callers", async () => {
     const receivers: unknown[] = [];
     const fetchImpl: typeof fetch = async function (this: unknown, url) {

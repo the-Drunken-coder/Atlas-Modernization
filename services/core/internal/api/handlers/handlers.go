@@ -13,32 +13,21 @@ import (
 
 // Handler provides HTTP request handling for the Atlas Core API.
 type Handler struct {
-	db             *database.DB
-	storage        *storage.Client
-	logger         zerolog.Logger
-	config         *config.Config
-	entityActions  *actions.EntityActions
-	taskActions    *actions.TaskActions
-	objectActions  *actions.ObjectActions
-	checkinActions *actions.EntityCheckinActions
-	queryActions   *actions.QueryActions
-	feedHub        *feed.Hub
-	adminAuth      *admin.Service
-	plugins        pluginRegistry
+	db            *database.DB
+	storage       *storage.Client
+	logger        zerolog.Logger
+	config        *config.Config
+	entityActions *actions.EntityActions
+	taskActions   *actions.TaskActions
+	objectActions *actions.ObjectActions
+	queryActions  *actions.QueryActions
+	feedHub       *feed.Hub
+	adminAuth     *admin.Service
+	plugins       pluginRegistry
 }
 
-// NewHandler creates a new Handler.
-func NewHandler(db *database.DB, storageClient *storage.Client, logger zerolog.Logger, cfg *config.Config) *Handler {
-	return NewHandlerWithFeed(db, storageClient, logger, cfg, nil, nil)
-}
-
-// NewHandlerWithFeed creates a Handler with the feed endpoint wired to feedHub.
-func NewHandlerWithFeed(db *database.DB, storageClient *storage.Client, logger zerolog.Logger, cfg *config.Config, feedHub *feed.Hub, adminAuth *admin.Service) *Handler {
-	return NewHandlerWithPlugins(db, storageClient, logger, cfg, feedHub, adminAuth, nil)
-}
-
-// NewHandlerWithPlugins creates a Handler with optional Plugin dispatch.
-func NewHandlerWithPlugins(db *database.DB, storageClient *storage.Client, logger zerolog.Logger, cfg *config.Config, feedHub *feed.Hub, adminAuth *admin.Service, registry pluginRegistry) *Handler {
+// NewHandler creates a Handler using the process's Task actions.
+func NewHandler(db *database.DB, storageClient *storage.Client, logger zerolog.Logger, cfg *config.Config, feedHub *feed.Hub, adminAuth *admin.Service, registry pluginRegistry, taskActions *actions.TaskActions) *Handler {
 	if cfg == nil {
 		panic("handlers.NewHandler: config is required")
 	}
@@ -50,20 +39,21 @@ func NewHandlerWithPlugins(db *database.DB, storageClient *storage.Client, logge
 		pluginIDs = append(pluginIDs, plugin.ID)
 	}
 	entityActions := actions.NewEntityActionsWithPlugins(db.Pool, pluginIDs)
-	taskActions := actions.NewTaskActionsWithPlugins(db.Pool, pluginIDs)
+	if taskActions == nil {
+		panic("handlers.NewHandler: task actions are required")
+	}
 
 	return &Handler{
-		db:             db,
-		storage:        storageClient,
-		logger:         logger,
-		config:         cfg,
-		entityActions:  entityActions,
-		taskActions:    taskActions,
-		objectActions:  actions.NewObjectActions(db.Pool, storageClient),
-		checkinActions: actions.NewEntityCheckinActions(entityActions),
-		queryActions:   actions.NewQueryActions(db.Pool),
-		feedHub:        feedHub,
-		adminAuth:      adminAuth,
-		plugins:        registry,
+		db:            db,
+		storage:       storageClient,
+		logger:        logger,
+		config:        cfg,
+		entityActions: entityActions,
+		taskActions:   taskActions,
+		objectActions: actions.NewObjectActions(db.Pool, storageClient),
+		queryActions:  actions.NewQueryActions(db.Pool),
+		feedHub:       feedHub,
+		adminAuth:     adminAuth,
+		plugins:       registry,
 	}
 }

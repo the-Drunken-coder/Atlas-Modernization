@@ -15,7 +15,7 @@ import (
 
 func TestMovementRoutes(t *testing.T) {
 	pool := openIsolatedFeedIntegrationPool(t)
-	h := NewHandler(&atlasdb.DB{Pool: pool}, nil, zerolog.Nop(), &config.Config{})
+	h := newConfiguredTestHandler(&atlasdb.DB{Pool: pool}, nil, zerolog.Nop(), &config.Config{})
 	e, err := h.entityActions.Create(t.Context(), actions.CreateEntityParams{EntityID: "history-routes", EntityType: "track"})
 	if err != nil {
 		t.Fatal(err)

@@ -18,7 +18,7 @@ import {
   isTaskProgressRequest,
   isTaskStartRequest
 } from "../src";
-import { isObjectDetailResource, isObjectResource } from "../src/protocol.js";
+import { isCommandCatalog, isCommandManifest, isObjectDetailResource, isObjectResource } from "../src/protocol.js";
 
 const validators = {
   EntityCheckInRequest: isEntityCheckInRequest,
@@ -39,6 +39,33 @@ const validators = {
 } as const;
 
 describe("generated request validator conformance", () => {
+  it("rejects Unicode whitespace-only strings while accepting visible content", () => {
+    for (const value of ["", " ", "\u0085", "\uFEFF", "\u2000\u2029\u3000"]) {
+      expect(isObjectCreateRequest({ object_id: value })).toBe(false);
+    }
+    expect(isObjectCreateRequest({ object_id: "\uFEFFvalue\u0085" })).toBe(true);
+  });
+
+  it("rejects duplicate command names in catalogs and manifests", () => {
+    const command = {
+      command: "test.command",
+      name: "Test",
+      description: "Test command",
+      input_schema: "atlas.tasking.EmptyObject"
+    };
+    expect(isCommandCatalog([command])).toBe(true);
+    expect(isCommandCatalog([command, command])).toBe(false);
+    const manifest = {
+      command: "test.command",
+      description: "Test command",
+      scheduling: "queued",
+      supports_cancel: true,
+      supports_progress: true
+    };
+    expect(isCommandManifest([manifest])).toBe(true);
+    expect(isCommandManifest([manifest, manifest])).toBe(false);
+  });
+
   for (const testCase of requestCorpus.cases) {
     it(testCase.name, () => {
       const validate = validators[testCase.definition as keyof typeof validators];

@@ -1,6 +1,4 @@
 import type {
-  EntityCheckInFullResponse,
-  EntityCheckInMinimalResponse,
   EntityCheckInResponse,
   EntityComponents,
   EntityResource,
@@ -72,8 +70,6 @@ export type TaskCancelOptions = {
   signal?: AbortSignal;
 };
 
-export type EntityCheckInFields = "full" | "minimal";
-
 export type EntityCheckInTelemetry = {
   latitude?: number;
   longitude?: number;
@@ -82,7 +78,7 @@ export type EntityCheckInTelemetry = {
   heading_deg?: number;
 };
 
-type EntityCheckInBaseOptions = {
+export type EntityCheckInOptions = {
   movementObservedAt?: string;
   status?: string;
   telemetry?: EntityCheckInTelemetry;
@@ -91,12 +87,7 @@ type EntityCheckInBaseOptions = {
   signal?: AbortSignal;
 };
 
-export type EntityCheckInOptions<TFields extends EntityCheckInFields = EntityCheckInFields> = EntityCheckInBaseOptions &
-  (TFields extends "minimal" ? { fields: "minimal" } : { fields?: TFields });
-
 export type EntityCheckInMethod = {
-  (id: string, options: EntityCheckInOptions<"minimal">): Promise<EntityCheckInMinimalResponse>;
-  (id: string, options?: EntityCheckInOptions<"full">): Promise<EntityCheckInFullResponse>;
   (id: string, options?: EntityCheckInOptions): Promise<EntityCheckInResponse>;
 };
 

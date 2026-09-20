@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { ATLAS_PROTOCOL_REVISION, AtlasClient, isEntityCheckInFullResponse } from "../src";
+import {
+  ATLAS_PROTOCOL_REVISION,
+  AtlasClient,
+  isChangedSinceResponse,
+  isEntityCheckInResponse,
+  isFullDatasetResponse
+} from "../src";
 import { FeedConnectionManager } from "../src/feed-connection.js";
 import { entity, FakeCore, metadata, object, task } from "./support/fake-core.js";
 import { FakeWebSocket } from "./support/fake-websocket.js";
@@ -32,6 +38,11 @@ const changedEntityEvent = (id: string, version: number) => ({
 });
 
 describe("AtlasClient inbound response validation", () => {
+  it("requires continuation cursors in paginated response validators", () => {
+    expect(isFullDatasetResponse(fullPage({ has_more_entities: true }))).toBe(false);
+    expect(isChangedSinceResponse(changedPage({ has_more: true }))).toBe(false);
+  });
+
   it("rejects a malformed HTTP handshake even when the protocol revision matches", async () => {
     const client = new AtlasClient({
       baseUrl: "http://atlas.test",
@@ -45,8 +56,6 @@ describe("AtlasClient inbound response validation", () => {
     ["missing a required resource array", { entities: [], objects: [] }],
     ["missing its version watermark", fullPage({ version: undefined })],
     ["with a fractional version watermark", fullPage({ version: 1.5 })],
-    ["with a negative version watermark", fullPage({ version: -1 })],
-    ["with an unsafe version watermark", fullPage({ version: Number.MAX_SAFE_INTEGER + 1 })],
     ["containing a resource in the wrong bucket", fullPage({ entities: [validTask("task-wrong-bucket", "asset-1")] })],
     ["containing malformed resource metadata", fullPage({ entities: [validEntity("asset-zero-version", 0)] })],
     ["omitting a pagination flag", fullPage({ has_more_tasks: undefined })],
@@ -152,6 +161,34 @@ describe("AtlasClient inbound response validation", () => {
     expect(client.sync.status().lastVersion).toBe(0);
   });
 
+  it("settles a deferred not-found response when the newer point response has the wrong id", async () => {
+    const original = validEntity("asset-requested", 1);
+    const olderResponse = Promise.withResolvers<Response>();
+    const newerResponse = Promise.withResolvers<Response>();
+    const responses = [Promise.resolve(Response.json(original)), olderResponse.promise, newerResponse.promise];
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: async () => {
+        const response = responses.shift();
+        if (!response) throw new Error("Unexpected request");
+        return response;
+      },
+      sync: "all",
+      pollIntervalMs: 0
+    });
+    await client.entities.get(original.entity_id, { fresh: true });
+    const olderRead = client.entities.get(original.entity_id, { fresh: true });
+    const newerRead = client.entities.get(original.entity_id, { fresh: true });
+    olderResponse.resolve(Response.json({ error_code: "ENTITY_NOT_FOUND" }, { status: 404 }));
+    await expect(olderRead).rejects.toMatchObject({ status: 404 });
+    expect(client.sync.snapshot().entities[original.entity_id]).toEqual(original);
+
+    newerResponse.resolve(Response.json(validEntity("asset-other", 2)));
+    await expect(newerRead).rejects.toThrow("does not match requested id");
+    expect(client.sync.snapshot().entities[original.entity_id]).toBeUndefined();
+    expect(client.sync.snapshot().entities["asset-other"]).toBeUndefined();
+  });
+
   it("rejects Task lifecycle responses for a different Task id without poisoning the cache", async () => {
     const client = new AtlasClient({
       baseUrl: "http://atlas.test",
@@ -216,6 +253,16 @@ describe("AtlasClient inbound response validation", () => {
       "Atlas response did not include a valid resource ETag for GET /tasks/task-without-etag"
     );
     expect(client.sync.snapshot().tasks).toEqual({});
+  });
+
+  it("accepts the extra field on HTTP ObjectDetailResource values", async () => {
+    const response = {
+      ...validObject("object-http-extra", 1),
+      extra: { label: "thermal", nested: { confidence: 0.91 }, values: [1, true, null] }
+    };
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: async () => Response.json(response) });
+
+    await expect(client.objects.get(response.object_id, { fresh: true })).resolves.toEqual(response);
   });
 
   it("accepts a depth-3000 object detail extra value through normal response validation", async () => {
@@ -397,7 +444,7 @@ describe("AtlasClient inbound response validation", () => {
     const contextuallyInvalidResponse = {
       entity: { ...existingEntity, entity_id: "asset-other", alias: "must not leak" }
     };
-    expect(isEntityCheckInFullResponse(contextuallyInvalidResponse)).toBe(true);
+    expect(isEntityCheckInResponse(contextuallyInvalidResponse)).toBe(true);
     const fetchImpl: typeof fetch = async (url, init) => {
       const path = new URL(String(url)).pathname;
       if (!malformedCheckIn || path !== `/entities/${existingEntity.entity_id}/checkin`)

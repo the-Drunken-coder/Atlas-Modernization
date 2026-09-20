@@ -258,7 +258,6 @@ function isResourceOperation(value: Record<string, unknown>): value is ResourceO
     optionalNonNegativeInteger(value.if_match_version) &&
     optionalString(value.plugin_id) &&
     optionalString(value.plugin_operation_id) &&
-    (value.fields === undefined || value.fields === "full" || value.fields === "minimal") &&
     validOperationContext(value.operation, value) &&
     validOperationInput(value.operation, value.input)
   );

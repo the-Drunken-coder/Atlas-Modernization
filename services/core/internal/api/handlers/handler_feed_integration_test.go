@@ -48,7 +48,7 @@ func TestFeedReadsCommittedEventsWithoutRejectedWriteGaps(t *testing.T) {
 		<-dispatcherDone
 		hub.Close()
 	})
-	handler := NewHandlerWithFeed(
+	handler := newTestHandlerWithFeed(
 		&atlasdb.DB{Pool: pool},
 		nil,
 		zerolog.Nop(),
@@ -187,7 +187,7 @@ func TestFeedAPIKeyTakesPrecedenceOverSessionOrigin(t *testing.T) {
 
 	hub := feed.NewHub(feed.Options{})
 	defer hub.Close()
-	handler := NewHandlerWithFeed(
+	handler := newTestHandlerWithFeed(
 		&atlasdb.DB{Pool: pool},
 		nil,
 		zerolog.Nop(),
