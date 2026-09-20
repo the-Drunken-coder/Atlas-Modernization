@@ -164,9 +164,10 @@ reviews:
     - path: "**/*_test.go"
       instructions: |
         Tests should assert behavior and failure modes, not implementation trivia.
-        Check for missing regression coverage, weak assertions, hidden flakiness,
-        untested error paths, time/order nondeterminism, and tests that preserve
-        compatibility shims without an explicit design decision.
+        Check for weak assertions, hidden flakiness, time/order nondeterminism,
+        and tests that preserve implementation trivia or compatibility shims
+        without an explicit design decision. Request a new regression test only
+        for a meaningful uncovered failure mode; prefer extending an existing test.
     - path: "AGENTS.md"
       instructions: |
         Treat this as repo operating policy for agents. Flag stale paths, missing
@@ -187,18 +188,20 @@ reviews:
 
   finishing_touches:
     docstrings:
-      enabled: true
+      enabled: false
     unit_tests:
-      enabled: true
+      enabled: false
     simplify:
       enabled: true
     custom:
       - enabled: true
         name: "tighten tests"
         instructions: |
-          Add or strengthen focused tests for the changed behavior, especially
-          validation failures, deleted behavior, race-prone paths, generated
-          artifact drift, and storage/database cleanup edge cases.
+          Do not add a test merely because code changed or a bug was fixed.
+          First reuse, simplify, or extend an existing behavioral test. Add a new
+          regression case only when the change exposes a meaningful failure mode
+          that is not already protected. Remove tests that only preserve obsolete
+          helpers, implementation spelling, or superseded compatibility behavior.
       - enabled: true
         name: "remove compatibility bloat"
         instructions: |
