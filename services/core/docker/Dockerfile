@@ -3,7 +3,7 @@
 
 # Compile on the runner's native architecture. Go emits the binary for each
 # requested image platform without running the compiler through QEMU.
-FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:cf6fca6641884b8433441b2b0652976f975e1d0fdd26d177eaaf8596087f3125 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414 AS builder
 
 ARG TARGETOS
 ARG TARGETARCH
@@ -33,7 +33,7 @@ RUN CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" go build -ldflags="-w -s
     CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" go build -ldflags="-w -s" -o atlas_source_gateway ./cmd/atlas_source_gateway
 
 # Development stage: use the same multi-arch index digest as the builder stage.
-FROM golang:1.27-alpine@sha256:cf6fca6641884b8433441b2b0652976f975e1d0fdd26d177eaaf8596087f3125 AS development
+FROM golang:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414 AS development
 
 # Alpine packages (match builder stage).
 RUN apk add --no-cache ca-certificates curl
