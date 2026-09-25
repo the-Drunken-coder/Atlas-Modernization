@@ -50,8 +50,8 @@
   "devDependencies": {
     "@vitest/coverage-v8": "5.0.1",
     "playwright": "1.63.0",
-    "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
   },
   "overrides": {
     "undici@7.28.0": "7.29.0",
