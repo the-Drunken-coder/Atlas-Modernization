@@ -89,7 +89,7 @@ ENTRYPOINT ["./production-entrypoint.sh"]
 CMD ["go", "run", "./cmd/atlas_core"]
 
 # Production stage (digest pins alpine:3.24 index)
-FROM alpine:3.24@sha256:e7c4abb69531cb09e2a2bbb56fad3367ab694865c49df898c1c683185cc4376c AS production
+FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 AS production
 
 # The pinned image is not rebuilt for later v3.24 security fixes, so refresh its base packages.
 RUN apk upgrade --no-cache && apk add --no-cache ca-certificates curl
@@ -119,7 +119,7 @@ HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
 ENTRYPOINT ["./production-entrypoint.sh"]
 CMD ["./atlas_core"]
 
-FROM alpine:3.24@sha256:e7c4abb69531cb09e2a2bbb56fad3367ab694865c49df898c1c683185cc4376c AS source-gateway-production
+FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 AS source-gateway-production
 RUN apk upgrade --no-cache && apk add --no-cache ca-certificates curl
 RUN addgroup -S atlas && adduser -S atlas -G atlas
 WORKDIR /app
