@@ -51,7 +51,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
           package-manager-cache: false
@@ -170,7 +170,7 @@ jobs:
       - name: Upload sealed recovery bundle
         id: sealed-artifact
         if: steps.state.outputs.mode == 'sealed'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: atlas-core-sealed-${{ steps.identity.outputs.version }}-${{ github.run_id }}
           path: sealed-bundle/
@@ -193,7 +193,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
           package-manager-cache: false
@@ -290,7 +290,7 @@ jobs:
             --version "${{ needs.inspect.outputs.version }}"
 
       - name: Upload fixed notes
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: atlas-core-notes-${{ needs.inspect.outputs.version }}-${{ github.run_id }}
           path: release-notes.md
@@ -366,7 +366,7 @@ jobs:
             '{digest: $digest, reference: $reference, platforms: ["linux/amd64", "linux/arm64"]}' > image.json
 
       - name: Upload image identity
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: atlas-core-image-${{ needs.inspect.outputs.version }}-${{ github.run_id }}
           path: image.json
@@ -389,7 +389,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
           package-manager-cache: false
@@ -433,7 +433,7 @@ jobs:
           NODE
 
       - name: Upload exact package
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: atlas-core-package-${{ needs.inspect.outputs.version }}-${{ github.run_id }}
           path: ${{ runner.temp }}/atlas-core-package/
@@ -466,13 +466,13 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
           package-manager-cache: false
 
       - name: Download exact package
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: atlas-core-package-${{ needs.inspect.outputs.version }}-${{ github.run_id }}
           path: ${{ runner.temp }}/atlas-core-package
@@ -499,7 +499,7 @@ jobs:
 
       - name: Upload Docker evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: atlas-core-docker-${{ matrix.architecture }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/docker-${{ matrix.architecture }}.tgz
@@ -541,13 +541,13 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
           package-manager-cache: false
 
       - name: Download exact package
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: atlas-core-package-${{ needs.inspect.outputs.version }}-${{ github.run_id }}
           path: ${{ runner.temp }}/atlas-core-package
@@ -563,7 +563,7 @@ jobs:
 
       - name: Upload packed-consumer evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: atlas-core-portable-${{ matrix.name }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/portable-${{ matrix.name }}.json
@@ -588,7 +588,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
           package-manager-cache: false
@@ -599,25 +599,25 @@ jobs:
           npm run build --workspace @atlas/atlas-core-release
 
       - name: Download package
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: atlas-core-package-${{ needs.inspect.outputs.version }}-${{ github.run_id }}
           path: candidate/package
 
       - name: Download notes
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: atlas-core-notes-${{ needs.inspect.outputs.version }}-${{ github.run_id }}
           path: candidate/notes
 
       - name: Download Docker evidence
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: atlas-core-docker-*-${{ github.run_id }}-*
           path: candidate/evidence-artifacts
 
       - name: Download packed-consumer evidence
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: atlas-core-portable-*-${{ github.run_id }}-*
           path: candidate/evidence-artifacts
@@ -681,7 +681,7 @@ jobs:
 
       - name: Upload exact candidate
         id: upload
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: atlas-core-candidate-${{ needs.inspect.outputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/release-bundle/
@@ -701,14 +701,14 @@ jobs:
     steps:
       - name: Download prepared candidate
         if: needs.inspect.outputs.mode == 'prepare'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: atlas-core-candidate-${{ needs.inspect.outputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: candidate
 
       - name: Download sealed candidate
         if: needs.inspect.outputs.mode == 'sealed'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: atlas-core-sealed-${{ needs.inspect.outputs.version }}-${{ github.run_id }}
           path: candidate
@@ -765,7 +765,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node and npm trusted publishing
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
           registry-url: https://registry.npmjs.org
@@ -780,14 +780,14 @@ jobs:
 
       - name: Download prepared candidate
         if: needs.inspect.outputs.mode == 'prepare'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: atlas-core-candidate-${{ needs.inspect.outputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: bundle
 
       - name: Download sealed candidate
         if: needs.inspect.outputs.mode == 'sealed'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: atlas-core-sealed-${{ needs.inspect.outputs.version }}-${{ github.run_id }}
           path: bundle
@@ -864,7 +864,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
           registry-url: https://registry.npmjs.org
