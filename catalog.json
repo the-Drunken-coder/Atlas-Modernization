@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "sequence": 6,
-  "previous_catalog_sha256": "sha256:34dde1e6166002cba924214d7c51eeabc9856a7d9b1fdc301ce6d7ab71c566cd",
-  "issued_at": "2026-10-12T04:44:21.164Z",
-  "expires_at": "2026-11-11T04:44:21.164Z",
+  "sequence": 7,
+  "previous_catalog_sha256": "sha256:ec56f81c85d7b24b6cbb3a95c9e0429f1738f8bef25b94d1fb377a069f1f32dd",
+  "issued_at": "2026-10-19T04:33:49.884Z",
+  "expires_at": "2026-11-18T04:33:49.884Z",
   "key_epoch": 1,
   "key_id": "atlas-plugin-catalog-2026-09",
   "plugins": [
