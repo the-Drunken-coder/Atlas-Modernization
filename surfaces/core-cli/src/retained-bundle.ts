@@ -16,6 +16,7 @@ import {
   writeFileSync
 } from "node:fs";
 import { dirname, isAbsolute, join, normalize, relative, sep } from "node:path";
+import { parse as parseYaml } from "yaml";
 
 const BUNDLE_SCHEMA = 1 as const;
 const SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/;
@@ -165,22 +166,85 @@ function assertComposeReferences(sourceRoot: string, paths: readonly string[], c
     assertNoSymlinkAncestors(sourceRoot, composePath, `bundle Compose file ${composePath}`);
     assertRegularFile(composeFile, `bundle Compose file ${composePath}`);
     const contents = readFileSync(composeFile, "utf8");
-    const references = [
-      ...contents
-        .split(/\r?\n/)
-        .filter((line) => /\b(volumes|env_file|configs|secrets|build)\b/u.test(line))
-        .flatMap((line) => [...line.matchAll(/(?:^|[\s"'])(\.\.?\/[^"'\s:]+)/g)]),
-      ...contents.matchAll(/\bfile:\s*["']?([^"'\s},]+)/g)
-    ];
-    for (const match of references) {
-      const reference = match[1];
-      if (!reference) continue;
-      const normalized = validateRelativePath(join(dirname(composePath), reference));
-      if (!pathSet.has(normalized)) {
-        throw new Error(`Retained bundle Compose file ${composePath} references missing file ${normalized}.`);
+    for (const reference of composeReferences(contents)) {
+      if (isAbsolute(reference) || reference.includes("\0")) {
+        throw new Error(`Invalid retained bundle Compose reference ${JSON.stringify(reference)}.`);
+      }
+      const normalized = normalize(join(dirname(composePath), reference));
+      // A directory bind or build context needs all of its files retained too.
+      if (normalized !== ".") validateRelativePath(normalized);
+      assertNoSymlinkAncestors(sourceRoot, normalized, `bundle Compose reference ${reference}`);
+      const source = join(sourceRoot, normalized);
+      let requiredPaths = [normalized];
+      if (existsSync(source) && lstatSync(source).isDirectory()) {
+        requiredPaths = listFiles(source).map((path) => join(normalized, path));
+        if (requiredPaths.length === 0) {
+          throw new Error(`Retained bundle Compose file ${composePath} references an empty directory ${normalized}.`);
+        }
+      }
+      for (const path of requiredPaths) {
+        if (!pathSet.has(path)) {
+          throw new Error(`Retained bundle Compose file ${composePath} references missing file ${path}.`);
+        }
       }
     }
   }
+}
+
+function composeReferences(contents: string): Set<string> {
+  const compose: unknown = parseYaml(contents, { merge: true });
+  if (!isRecord(compose)) throw new Error("Retained bundle Compose document must be a mapping.");
+  const references = new Set<string>();
+  const addFile = (path: unknown): void => {
+    if (typeof path === "string") references.add(path);
+  };
+
+  for (const definitions of [compose.configs, compose.secrets]) {
+    if (!isRecord(definitions)) continue;
+    for (const definition of Object.values(definitions)) {
+      if (isRecord(definition)) addFile(definition.file);
+    }
+  }
+  if (!isRecord(compose.services)) return references;
+  for (const service of Object.values(compose.services)) {
+    if (!isRecord(service)) continue;
+    if (isRecord(service.extends)) addFile(service.extends.file);
+
+    const envFiles = Array.isArray(service.env_file) ? service.env_file : [service.env_file];
+    for (const envFile of envFiles) {
+      if (isRecord(envFile)) {
+        if (envFile.required !== false) addFile(envFile.path);
+      } else {
+        addFile(envFile);
+      }
+    }
+
+    if (Array.isArray(service.volumes)) {
+      for (const volume of service.volumes) {
+        if (typeof volume === "string") {
+          const source = volume.split(":", 1)[0];
+          // Named volumes, absolute host mounts and container-only paths are not bundle files.
+          if (source?.startsWith(".")) addFile(source);
+        } else if (isRecord(volume) && volume.type === "bind" && typeof volume.source === "string") {
+          if (!isAbsolute(volume.source) && !volume.source.includes("$")) addFile(volume.source);
+        }
+      }
+    }
+
+    const build = service.build;
+    const context = isRecord(build) ? (build.context ?? ".") : build;
+    if (typeof context === "string" && !isAbsolute(context) && !context.includes(":") && !context.includes("$")) {
+      addFile(context);
+      if (isRecord(build) && typeof build.dockerfile === "string") {
+        addFile(isAbsolute(build.dockerfile) ? build.dockerfile : join(context, build.dockerfile));
+      }
+    }
+  }
+  return references;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function normalizedUniquePaths(paths: readonly string[]): string[] {

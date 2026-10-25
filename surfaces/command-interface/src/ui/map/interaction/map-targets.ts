@@ -71,10 +71,12 @@ export function hoverSelectionTargets(
     }
   }
 
-  const markers = cachedMarkerBoxes(cache, event.currentTarget, mapRect)
-    .map((entry) => ({ entry, distance: distanceToBox(point, entry.box) }))
-    .filter(({ distance }) => distance <= HOVER_MAGNET_RADIUS)
-    .sort((a, b) => a.distance - b.distance);
+  const markers: { entry: HoverTarget; distance: number }[] = [];
+  for (const entry of cachedMarkerBoxes(cache, event.currentTarget, mapRect)) {
+    const distance = distanceToBox(point, entry.box);
+    if (distance <= HOVER_MAGNET_RADIUS) markers.push({ entry, distance });
+  }
+  markers.sort((a, b) => a.distance - b.distance);
   for (const { entry } of markers) push(entry);
 
   if (!map) return candidates;
@@ -136,28 +138,55 @@ export function nextVisibleEntityInDirection(
 ): string | undefined {
   const viewport = mapCanvas.getBoundingClientRect();
   const size = { width: viewport.width, height: viewport.height };
-  const targets = [...sources.assets.features, ...sources.tracks.features, ...sources.geofeatures.features].flatMap(
-    (feature) => {
-      const box = targetBoxForEntityId(mapCanvas, map, sources, feature.properties.entityId);
-      const center = box && visibleBoxCenter(box, size);
-      return center ? [{ entityId: feature.properties.entityId, center }] : [];
+  const markerBoxes = new Map<string, TargetBox>();
+  for (const element of mapCanvas.querySelectorAll<HTMLElement>(".map-symbol-marker")) {
+    const entityId = element.dataset.entityId;
+    // Keep the same first-marker precedence as targetBoxForEntityId.
+    if (entityId && !markerBoxes.has(entityId)) {
+      markerBoxes.set(entityId, boxFromElement(element, viewport));
     }
-  );
-  const origin = targets.find((target) => target.entityId === selectedEntityId)?.center ?? {
-    x: size.width / 2,
-    y: size.height / 2
-  };
+  }
 
-  return targets
-    .filter((target) => target.entityId !== selectedEntityId)
-    .map((target) => ({ target, ...directionalDistances(origin, target.center, direction) }))
-    .filter(({ forward }) => forward > 0)
-    .sort(
-      (a, b) =>
-        a.forward + a.cross * 2 - (b.forward + b.cross * 2) ||
-        a.cross - b.cross ||
-        a.target.entityId.localeCompare(b.target.entityId)
-    )[0]?.target.entityId;
+  const targets: { entityId: string; center: ScreenPoint }[] = [];
+  const seen = new Set<string>();
+  let origin = { x: size.width / 2, y: size.height / 2 };
+  for (const source of [sources.assets, sources.tracks, sources.geofeatures]) {
+    for (const feature of source.features) {
+      const entityId = feature.properties.entityId;
+      // featureForEntityId also gives the first source entry precedence.
+      if (seen.has(entityId)) continue;
+      seen.add(entityId);
+      const box = markerBoxes.get(entityId) ?? boxForFeature(map, feature);
+      const center = box && visibleBoxCenter(box, size);
+      if (!center) continue;
+      targets.push({ entityId, center });
+      if (entityId === selectedEntityId) origin = center;
+    }
+  }
+
+  let bestEntityId: string | undefined;
+  let bestScore = Number.POSITIVE_INFINITY;
+  let bestCross = Number.POSITIVE_INFINITY;
+  for (const target of targets) {
+    if (target.entityId === selectedEntityId) continue;
+    const { forward, cross } = directionalDistances(origin, target.center, direction);
+    if (forward <= 0) continue;
+    const score = forward + cross * 2;
+    if (score > bestScore) continue;
+    if (score === bestScore && cross > bestCross) continue;
+    if (
+      score === bestScore &&
+      cross === bestCross &&
+      bestEntityId !== undefined &&
+      target.entityId.localeCompare(bestEntityId) >= 0
+    ) {
+      continue;
+    }
+    bestEntityId = target.entityId;
+    bestScore = score;
+    bestCross = cross;
+  }
+  return bestEntityId;
 }
 
 function cachedMarkerBoxes(cache: MarkerBoxCache, mapCanvas: HTMLElement, mapRect: DOMRect): HoverTarget[] {
@@ -229,13 +258,16 @@ function directionalDistances(
 ): { forward: number; cross: number } {
   const dx = target.x - origin.x;
   const dy = target.y - origin.y;
-  return direction === "up"
-    ? { forward: -dy, cross: Math.abs(dx) }
-    : direction === "down"
-      ? { forward: dy, cross: Math.abs(dx) }
-      : direction === "left"
-        ? { forward: -dx, cross: Math.abs(dy) }
-        : { forward: dx, cross: Math.abs(dy) };
+  switch (direction) {
+    case "up":
+      return { forward: -dy, cross: Math.abs(dx) };
+    case "down":
+      return { forward: dy, cross: Math.abs(dx) };
+    case "left":
+      return { forward: -dx, cross: Math.abs(dy) };
+    case "right":
+      return { forward: dx, cross: Math.abs(dy) };
+  }
 }
 
 function boxFromFeature(map: MlMap, feature: MapGeoJSONFeature): TargetBox | null {

@@ -103,6 +103,24 @@ describe("AtlasClient sync: cache projection and reads", () => {
     expect(core.requests).toContain(`/queries/changed-since?since_version=${deletion.version}`);
   });
 
+  it("releases old generations on hydration without accepting reads from the previous epoch", () => {
+    const cache = new ResourceCache();
+    const original = entity("asset-generation-reset");
+    const oldRead = cache.beginPointRead("entity", original.entity_id);
+    const deletion = cache.beginLocalDelete("entity", original.entity_id);
+    cache.finishLocalDelete(deletion, "deleted");
+    expect(cache.beginPointRead("entity", original.entity_id).generation).toBeGreaterThan(0);
+
+    cache.replaceHydratedResources({ entities: [], tasks: [], objects: [] });
+
+    const newRead = cache.beginPointRead("entity", original.entity_id);
+    expect(newRead.generation).toBe(0);
+    expect(cache.applyPointRead(oldRead, original)).toBe(false);
+    expect(cache.applyPointNotFound(oldRead)).toBe(false);
+    expect(cache.applyPointRead(newRead, original)).toBe(true);
+    expect(cache.value("entity", original.entity_id)).toEqual(original);
+  });
+
   it("does not restore a resource from a point read started before hydration", async () => {
     const core = new FakeCore();
     const original = core.upsertEntity(entity("asset-read-across-hydration"));
