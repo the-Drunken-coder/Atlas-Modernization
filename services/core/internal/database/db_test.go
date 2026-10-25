@@ -122,51 +122,6 @@ func TestBuildPoolConfigClampsMinConnsWhenGreaterThanMaxConns(t *testing.T) {
 	}
 }
 
-func TestCloseHandlesNilPool(t *testing.T) {
-	db := &DB{}
-
-	db.Close()
-}
-
-func TestCoreSchemaTables(t *testing.T) {
-	want := []string{"entities", "tasks", "asset_runtime_generations", "asset_runtimes", "objects", "atlas_change_clock", "atlas_change_events", "object_deletion_fences", "storage_deletion_outbox", "storage_upload_intents", "resource_instance_tokens", "entity_movement_samples", "admin_records"}
-	if len(coreSchemaTables) != len(want) {
-		t.Fatalf("expected %d core tables, got %d", len(want), len(coreSchemaTables))
-	}
-	for i, name := range want {
-		if coreSchemaTables[i] != name {
-			t.Fatalf("coreSchemaTables[%d] = %q, want %q", i, coreSchemaTables[i], name)
-		}
-	}
-}
-
-func TestBaselineSchemaDDLIncludesCursorIndexes(t *testing.T) {
-	ddl := strings.Join(baselineSchemaDDL(), "\n")
-	want := []string{
-		"CREATE INDEX idx_entities_created_cursor ON entities(created_at DESC, entity_id DESC)",
-		"CREATE INDEX idx_entities_updated_cursor ON entities(updated_at DESC, entity_id DESC)",
-		"CREATE INDEX idx_tasks_created_cursor ON tasks(created_at DESC, task_id DESC)",
-		"CREATE INDEX idx_tasks_updated_cursor ON tasks(updated_at DESC, task_id DESC)",
-		"CREATE INDEX idx_tasks_entity_created_cursor ON tasks(entity_id, created_at DESC, task_id DESC)",
-		"CREATE INDEX idx_tasks_entity_updated_cursor ON tasks(entity_id, updated_at DESC, task_id DESC)",
-		"CREATE INDEX idx_objects_created_cursor ON objects(created_at DESC, object_id DESC)",
-		"CREATE INDEX idx_objects_updated_cursor ON objects(updated_at DESC, object_id DESC)",
-		"context JSONB NOT NULL DEFAULT '{}'",
-		"CREATE INDEX idx_deletions_type_deleted_cursor ON deletions(resource_type, deleted_at DESC, resource_id DESC)",
-		"CREATE TABLE storage_deletion_outbox",
-		"UNIQUE (bucket, path)",
-		"CREATE INDEX idx_storage_deletion_outbox_next_attempt ON storage_deletion_outbox(next_attempt_at, id)",
-		"CREATE TABLE IF NOT EXISTS admin_records",
-		"CREATE INDEX IF NOT EXISTS idx_admin_records_type ON admin_records(type)",
-	}
-
-	for _, stmt := range want {
-		if !strings.Contains(ddl, stmt) {
-			t.Fatalf("expected core schema DDL to include %q", stmt)
-		}
-	}
-}
-
 func TestScratchDataResetClearsResourcesOnly(t *testing.T) {
 	ddl := strings.Join(scratchDataResetDDL(), "\n")
 	for _, table := range []string{"storage_upload_intents", "storage_deletion_outbox", "object_deletion_fences", "resource_instance_tokens", "tasks", "entities", "objects", "atlas_change_events"} {

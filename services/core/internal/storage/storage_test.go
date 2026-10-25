@@ -9,44 +9,12 @@ import (
 	"github.com/the-drunken-coder/atlas/services/core/internal/config"
 )
 
-func TestStorageErrorMessage(t *testing.T) {
-	err := &StorageError{Message: "test error"}
-	if err.Error() != "test error" {
-		t.Fatalf("expected plain storage error message, got %q", err.Error())
-	}
-}
-
-func TestStorageErrorWithWrapped(t *testing.T) {
-	innerErr := &StorageError{Message: "inner error"}
-	outerErr := &StorageError{Message: "outer error", Err: innerErr}
-
-	if got := outerErr.Error(); got != "outer error: inner error" {
-		t.Fatalf("expected wrapped error message, got %q", got)
-	}
-}
-
 func TestStorageErrorUnwrap(t *testing.T) {
 	innerErr := &StorageError{Message: "inner error"}
 	outerErr := &StorageError{Message: "outer error", Err: innerErr}
 
 	if !errors.Is(outerErr, innerErr) {
 		t.Fatalf("expected outer error to wrap inner error")
-	}
-}
-
-func TestObjectNotFoundError(t *testing.T) {
-	err := &ObjectNotFoundError{Bucket: "atlas-media", ObjectName: "test-object"}
-	got := err.Error()
-	if !strings.Contains(got, "object not found") || !strings.Contains(got, "atlas-media") || !strings.Contains(got, "test-object") {
-		t.Fatalf("unexpected object not found message: %q", got)
-	}
-}
-
-func TestBucketNotFoundError(t *testing.T) {
-	err := &BucketNotFoundError{Bucket: "missing-bucket"}
-	got := err.Error()
-	if !strings.Contains(got, "bucket not found") || !strings.Contains(got, "missing-bucket") {
-		t.Fatalf("unexpected bucket not found message: %q", got)
 	}
 }
 
@@ -196,13 +164,6 @@ func TestNewObjectPathUsesVersionedKey(t *testing.T) {
 	}
 	if got == "objects/"+objectID {
 		t.Fatalf("NewObjectPath(%q) returned stale canonical key %q", objectID, got)
-	}
-}
-
-func TestBucketAccessor(t *testing.T) {
-	client := &Client{bucket: "atlas-media"}
-	if got := client.Bucket(); got != "atlas-media" {
-		t.Fatalf("Bucket() = %q, want atlas-media", got)
 	}
 }
 

@@ -13,19 +13,11 @@ func TestPruneChangeRecordsExpiresCursorAndPreservesObjectFence(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	var baseline, originalMin int64
-	if err := pool.QueryRow(ctx, `SELECT version, min_retained_version FROM atlas_change_clock WHERE singleton`).Scan(&baseline, &originalMin); err != nil {
+	var baseline int64
+	if err := pool.QueryRow(ctx, `SELECT version FROM atlas_change_clock WHERE singleton`).Scan(&baseline); err != nil {
 		t.Fatalf("read initial change state: %v", err)
 	}
 	objectID := fmt.Sprintf("retention-fence-%d", time.Now().UTC().UnixNano())
-	t.Cleanup(func() {
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cleanupCancel()
-		_, _ = pool.Exec(cleanupCtx, `DELETE FROM objects WHERE object_id = $1`, objectID)
-		_, _ = pool.Exec(cleanupCtx, `DELETE FROM atlas_change_events WHERE event->>'resource_type' = 'object' AND event->>'id' = $1`, objectID)
-		_, _ = pool.Exec(cleanupCtx, `DELETE FROM object_deletion_fences WHERE object_id = $1`, objectID)
-		_, _ = pool.Exec(cleanupCtx, `UPDATE atlas_change_clock SET min_retained_version = $1 WHERE singleton`, originalMin)
-	})
 
 	objectActions := NewObjectActions(pool, nil)
 	if _, err := objectActions.Create(ctx, CreateObjectParams{ObjectID: objectID}); err != nil {
@@ -83,17 +75,6 @@ func TestPruneChangeRecordsReleasesChangeClockBetweenBatches(t *testing.T) {
 	firstID := prefix + "-first"
 	secondID := prefix + "-second"
 	concurrentID := prefix + "-concurrent"
-	var originalMin int64
-	if err := pool.QueryRow(ctx, `SELECT min_retained_version FROM atlas_change_clock WHERE singleton`).Scan(&originalMin); err != nil {
-		t.Fatalf("read original recovery floor: %v", err)
-	}
-	t.Cleanup(func() {
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cleanupCancel()
-		_, _ = pool.Exec(cleanupCtx, `DELETE FROM entities WHERE entity_id = ANY($1)`, []string{firstID, secondID, concurrentID})
-		_, _ = pool.Exec(cleanupCtx, `DELETE FROM atlas_change_events WHERE event->>'id' = ANY($1)`, []string{firstID, secondID, concurrentID})
-		_, _ = pool.Exec(cleanupCtx, `UPDATE atlas_change_clock SET min_retained_version = $1 WHERE singleton`, originalMin)
-	})
 
 	entityActions := NewEntityActions(pool)
 	for _, id := range []string{firstID, secondID} {

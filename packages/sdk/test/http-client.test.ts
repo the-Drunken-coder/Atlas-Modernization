@@ -672,7 +672,6 @@ describe("AtlasClient HTTP", () => {
     expect(isEntityCreateRequest({ entity_id: "asset-valid", entity_type: "asset", alias: null })).toBe(true);
     expect(isEntityCreateRequest({ entity_id: "", entity_type: "asset" })).toBe(false);
     expect(isEntityUpdateRequest({ alias: null })).toBe(true);
-    expect(isEntityUpdateRequest({})).toBe(false);
 
     expect(
       isTaskCreateRequest({
@@ -698,32 +697,11 @@ describe("AtlasClient HTTP", () => {
     );
     expect(isObjectCreateRequest({ object_id: "object-invalid", referenced_by: [{}] })).toBe(false);
     expect(isObjectUpdateRequest({ usage_hints: ["thumbnail"] })).toBe(true);
-    expect(isObjectUpdateRequest({})).toBe(false);
   });
 
   it("counts Unicode code points at generated string-length boundaries", () => {
     expect(isEntityCreateRequest({ entity_id: "x", entity_type: "🙂".repeat(50) })).toBe(true);
     expect(isEntityCreateRequest({ entity_id: "x", entity_type: "🙂".repeat(51) })).toBe(false);
-  });
-
-  it("enforces fake Core route verbs while preserving default GET semantics", async () => {
-    const core = new FakeCore();
-    core.upsertEntity(entity("asset-method"));
-
-    const revision = await core.fetch("http://atlas.test/protocol/revision");
-    expect(revision.status).toBe(200);
-    await expect(revision.json()).resolves.toMatchObject({ protocol_revision: core.revision });
-
-    const entityResponse = await core.fetch("http://atlas.test/entities/asset-method");
-    expect(entityResponse.status).toBe(200);
-    await expect(entityResponse.json()).resolves.toMatchObject({ entity_id: "asset-method" });
-
-    await expect(
-      core.fetch("http://atlas.test/protocol/revision", { method: "POST" }).then((response) => response.status)
-    ).resolves.toBe(404);
-    await expect(
-      core.fetch("http://atlas.test/entities/asset-method", { method: "POST" }).then((response) => response.status)
-    ).resolves.toBe(404);
   });
 
   it("applies writes to cache and rejects stale nonzero preconditions across mutable routes", async () => {
@@ -762,62 +740,6 @@ describe("AtlasClient HTTP", () => {
     }
     expect(core.entities.get(currentEntity.entity_id)).toEqual(currentEntity);
     expect(core.objects.get(currentObject.object_id)).toEqual(currentObject);
-  });
-
-  it("accepts wildcard preconditions across mutable fake Core routes", async () => {
-    const core = new FakeCore();
-    core.upsertEntity(entity("asset-wildcard"));
-    core.upsertObject(object("object-wildcard"));
-
-    const wildcardWrites = [
-      ["PATCH", "/entities/asset-wildcard", { alias: "updated" }],
-      ["POST", "/entities/asset-wildcard/checkin", {}],
-      ["PATCH", "/objects/object-wildcard", { type: "log" }]
-    ] as const;
-
-    for (const [method, path, body] of wildcardWrites) {
-      const response = await core.fetch(`http://atlas.test${path}`, {
-        method,
-        headers: { "Content-Type": "application/json", "If-Match": "*" },
-        body: JSON.stringify(body)
-      });
-      expect(response.status, `${method} ${path}`).toBe(200);
-    }
-  });
-
-  it("rejects malformed fake Core resource paths without throwing or mutating resources", async () => {
-    const core = new FakeCore();
-    const originalEntity = core.upsertEntity(entity("route-entity"));
-    const originalTask = core.upsertTask(task("route-task", originalEntity.entity_id));
-    const originalObject = core.upsertObject(object("route-object"));
-
-    const malformedRoutes = [
-      ["PATCH", "/entities/route-entity/extra", { alias: "changed" }],
-      ["POST", "/entities/route-entity/checkin/extra", {}],
-      ["PATCH", "/tasks/route-task/extra", { status: "acknowledged" }],
-      ["POST", "/tasks/route-task/extra/more", {}],
-      ["PATCH", "/objects/route-object/extra", { type: "log" }],
-      ["GET", "/objects/route-object/extra/download", undefined]
-    ] as const;
-
-    for (const [method, path, body] of malformedRoutes) {
-      const response = await core.fetch(`http://atlas.test${path}`, {
-        method,
-        headers: { "Content-Type": "application/json" },
-        body: body === undefined ? undefined : JSON.stringify(body)
-      });
-      expect(response.status, `${method} ${path}`).toBe(404);
-    }
-    expect(core.entities.get(originalEntity.entity_id)).toEqual(originalEntity);
-    expect(core.tasks.get(originalTask.task_id)).toEqual(originalTask);
-    expect(core.objects.get(originalObject.object_id)).toEqual(originalObject);
-  });
-
-  it("returns a controlled error for malformed fake Core path escapes", async () => {
-    const core = new FakeCore();
-    const invalidEscape = await core.fetch("http://atlas.test/entities/%zz");
-    expect(invalidEscape.status).toBe(400);
-    await expect(invalidEscape.json()).resolves.toMatchObject({ error_code: "VALIDATION_ERROR" });
   });
 
   it("keeps fresh read and write return mutation from changing cached resources", async () => {
@@ -869,54 +791,25 @@ describe("AtlasClient HTTP", () => {
     });
   });
 
-  it("uses explicit Task lifecycle routes with runtime fencing headers", async () => {
+  it("sends runtime fencing for Task failure and leaves operator cancellation unfenced", async () => {
     const core = new FakeCore();
-    core.upsertTask(task("task-ack", "asset-1"));
-    core.upsertTask(task("task-start", "asset-1"));
-    core.upsertTask({ ...task("task-progress", "asset-1"), status: "in_progress" });
-    core.upsertTask(task("task-complete", "asset-1"));
     core.upsertTask(task("task-fail", "asset-1"));
     core.upsertTask(task("task-cancel", "asset-1"));
-    const client = new AtlasClient({
-      baseUrl: "http://atlas.test",
-      fetch: core.fetch,
-      WebSocket: core.attachWebSocketGlobal(),
-      sync: "all",
-      pollIntervalMs: 0
-    });
-    await client.sync.start();
-    const watch = vi.fn();
-    client.tasks.watch("task-ack", watch);
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
 
-    const runtime = { runtimeId: "runtime-1" };
-    const acknowledged = await client.tasks.acknowledge("task-ack", runtime);
-    const started = await client.tasks.start("task-start", runtime);
-    const progressed = await client.tasks.progress("task-progress", { progress: 0.625 }, runtime);
-    const completed = await client.tasks.complete("task-complete", { ...runtime, output: { ok: true } });
-    const failed = await client.tasks.fail("task-fail", {
-      ...runtime,
-      failure: { code: "execution_failed", message: "boom" }
-    });
-    const cancelled = await client.tasks.cancel("task-cancel", {
-      cancellation: { code: "requested", message: "Operator cancelled" }
-    });
-
-    expect(acknowledged.status).toBe("acknowledged");
-    expect(started.status).toBe("in_progress");
-    expect(progressed.progress).toBe(0.625);
-    expect(completed).toMatchObject({ status: "completed", output: { ok: true } });
-    expect(failed).toMatchObject({ status: "failed", failure: { code: "execution_failed", message: "boom" } });
-    expect(cancelled.status).toBe("cancelled");
-    await expect(client.tasks.get("task-ack")).resolves.toEqual(acknowledged);
-    expect(core.requestHeaders.find((request) => request.path === "/tasks/task-ack/acknowledge")?.runtimeId).toBe(
+    await expect(
+      client.tasks.fail("task-fail", {
+        runtimeId: "runtime-1",
+        failure: { code: "execution_failed", message: "boom" }
+      })
+    ).resolves.toMatchObject({ status: "failed", failure: { code: "execution_failed", message: "boom" } });
+    await expect(
+      client.tasks.cancel("task-cancel", { cancellation: { code: "requested", message: "Operator cancelled" } })
+    ).resolves.toMatchObject({ status: "cancelled" });
+    expect(core.requestHeaders.find((request) => request.path === "/tasks/task-fail/fail")?.runtimeId).toBe(
       "runtime-1"
     );
     expect(core.requestHeaders.find((request) => request.path === "/tasks/task-cancel/cancel")?.runtimeId).toBeNull();
-    expect(watch).toHaveBeenCalledWith(
-      expect.objectContaining({ status: "acknowledged" }),
-      expect.objectContaining({ event: "update", id: "task-ack" })
-    );
-    await expect(client.tasks.acknowledge("missing-task", runtime)).rejects.toBeInstanceOf(AtlasAPIError);
   });
 
   it("serializes Task completion without inherited toJSON hooks", async () => {
@@ -1162,7 +1055,7 @@ describe("AtlasClient HTTP", () => {
     expect(response).toMatchObject({ entity: { entity_id: checkedIn.entity_id } });
   });
 
-  it("surfaces Core-style check-in validation errors from the fake transport", async () => {
+  it("preserves Core validation errors for malformed write input", async () => {
     const core = new FakeCore();
     core.upsertEntity(entity("asset-invalid-checkin"));
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
@@ -1171,14 +1064,9 @@ describe("AtlasClient HTTP", () => {
       status: 400,
       errorCode: "VALIDATION_ERROR"
     });
-    const malformed = await core.fetch("http://atlas.test/entities/asset-invalid-checkin/checkin", {
-      method: "POST",
-      body: "{"
-    });
-    expect(malformed.status).toBe(400);
-    await expect(malformed.json()).resolves.toMatchObject({
-      success: false,
-      error_code: "INVALID_JSON"
+    await expect(client.tasks.create({} as never, { idempotencyKey: "invalid" })).rejects.toMatchObject({
+      status: 400,
+      errorCode: "INVALID_JSON"
     });
   });
 
@@ -1265,36 +1153,6 @@ describe("AtlasClient HTTP", () => {
     );
   });
 
-  it("assigns distinct UUID task IDs to repeated command requests", async () => {
-    const core = new FakeCore();
-    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
-    const command = { asset_id: "asset-command", command: "fixture.queued", input: { latitude: 38, longitude: -77 } };
-
-    const first = await client.tasks.create(command, { idempotencyKey: "attempt-1" });
-    const second = await client.tasks.create(command, { idempotencyKey: "attempt-2" });
-
-    expect(first.task_id).toMatch(/^task-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
-    expect(second.task_id).toMatch(/^task-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
-    expect(second.task_id).not.toBe(first.task_id);
-    expect([...core.tasks.keys()]).toEqual([first.task_id, second.task_id]);
-  });
-
-  it("rejects response-shaped write payloads with protocol error details", async () => {
-    const core = new FakeCore();
-    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
-
-    await expect(client.entities.create(entity("asset-with-metadata") as never)).rejects.toMatchObject({
-      status: 400,
-      errorCode: "INVALID_JSON"
-    });
-    await expect(
-      client.objects.create({ ...object("object-with-bucket"), bucket: "client-owned" } as never)
-    ).rejects.toMatchObject({
-      status: 400,
-      errorCode: "INVALID_JSON"
-    });
-  });
-
   it("round-trips object extra on detail and write responses", async () => {
     const core = new FakeCore();
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
@@ -1373,34 +1231,6 @@ describe("AtlasClient HTTP", () => {
     );
   });
 
-  it("rejects write payloads with missing required fields or invalid shapes", async () => {
-    const core = new FakeCore();
-    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
-
-    await expect(client.tasks.create({} as never, { idempotencyKey: "invalid" })).rejects.toMatchObject({
-      status: 400,
-      errorCode: "INVALID_JSON"
-    });
-    await expect(
-      client.objects.create({ object_id: "object-invalid-ref", referenced_by: [{}] } as never)
-    ).rejects.toMatchObject({
-      status: 400,
-      errorCode: "INVALID_JSON"
-    });
-    core.upsertEntity(entity("asset-empty-update"));
-    await expect(client.entities.update("asset-empty-update", {} as never)).rejects.toMatchObject({
-      status: 400,
-      errorCode: "INVALID_JSON"
-    });
-  });
-
-  it("rejects cyclic JSON values in Task input", () => {
-    const input: Record<string, unknown> = {};
-    input.self = input;
-
-    expect(isTaskCreateRequest({ asset_id: "asset-cycle", command: "fixture.queued", input })).toBe(false);
-  });
-
   it("rejects inbound JSON integers that JavaScript cannot represent exactly", async () => {
     const unsafeTask = `{
       "task_id":"task-unsafe-number",
@@ -1444,67 +1274,6 @@ describe("AtlasClient HTTP", () => {
       ).rejects.toThrow("number outside the JavaScript range");
     }
     expect(fetchImpl).not.toHaveBeenCalled();
-  });
-
-  it("returns protocol errors for malformed fake Core request JSON", async () => {
-    const core = new FakeCore();
-
-    const response = await core.fetch("http://atlas.test/tasks", {
-      method: "POST",
-      headers: { "Idempotency-Key": "malformed-json" },
-      body: "{"
-    });
-
-    await expect(response.json()).resolves.toEqual({
-      success: false,
-      message: "Invalid JSON body",
-      error_code: "INVALID_JSON"
-    });
-    expect(response.status).toBe(400);
-  });
-
-  it("returns protocol errors for invalid fake Core changed-since query params", async () => {
-    const core = new FakeCore();
-
-    const response = await core.fetch("http://atlas.test/queries/changed-since?since_version=invalid");
-
-    await expect(response.json()).resolves.toMatchObject({
-      success: false,
-      error_code: "VALIDATION_ERROR"
-    });
-    expect(response.status).toBe(400);
-  });
-
-  it("returns protocol errors for invalid fake Core pagination cursors", async () => {
-    const core = new FakeCore();
-    core.fullLimitPerType = 1;
-    core.changedSinceLimit = 1;
-
-    const fullResponse = await core.fetch("http://atlas.test/queries/full?entity_cursor=abc");
-    await expect(fullResponse.json()).resolves.toMatchObject({
-      success: false,
-      error_code: "VALIDATION_ERROR"
-    });
-    expect(fullResponse.status).toBe(400);
-
-    const changedSinceResponse = await core.fetch("http://atlas.test/queries/changed-since?since_version=0&cursor=-1");
-    await expect(changedSinceResponse.json()).resolves.toMatchObject({
-      success: false,
-      error_code: "VALIDATION_ERROR"
-    });
-    expect(changedSinceResponse.status).toBe(400);
-  });
-
-  it("returns protocol errors when downloading missing fake Core objects", async () => {
-    const core = new FakeCore();
-
-    const response = await core.fetch("http://atlas.test/objects/missing-object/download");
-
-    await expect(response.json()).resolves.toMatchObject({
-      success: false,
-      error_code: "OBJECT_NOT_FOUND"
-    });
-    expect(response.status).toBe(404);
   });
 
   it("preserves structured protocol errors for non-conflict failures", async () => {

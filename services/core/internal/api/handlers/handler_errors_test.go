@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"bytes"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -13,8 +12,6 @@ import (
 	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
 	"github.com/the-drunken-coder/atlas/services/core/internal/actions"
 	custommiddleware "github.com/the-drunken-coder/atlas/services/core/internal/api/middleware"
-	"github.com/the-drunken-coder/atlas/services/core/internal/models"
-	"github.com/the-drunken-coder/atlas/services/core/internal/serializers"
 	"github.com/the-drunken-coder/atlas/services/core/internal/storage"
 )
 
@@ -193,21 +190,5 @@ func TestParseRFC3339TimestampAcceptsNanoPrecision(t *testing.T) {
 	}
 	if got.Format(time.RFC3339Nano) != raw {
 		t.Fatalf("expected %s, got %s", raw, got.Format(time.RFC3339Nano))
-	}
-}
-
-func TestEntityCheckInResponseContainsOnlyEntity(t *testing.T) {
-	now := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
-	entity := serializers.SerializeEntity(&models.Entity{EntityID: "asset-1", Type: "asset", CreatedAt: now, UpdatedAt: now, Version: 1})
-	response := protocol.EntityCheckInFullResponse{Entity: *entity}
-	encoded, err := json.Marshal(response)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if validationErrors := protocol.ValidateEntityCheckInFullResponse(json.RawMessage(encoded)); len(validationErrors) > 0 {
-		t.Fatalf("response failed Protocol validation: %v", validationErrors)
-	}
-	if bytes.Contains(encoded, []byte(`"tasks"`)) {
-		t.Fatalf("check-in response still contains Task delivery: %s", encoded)
 	}
 }

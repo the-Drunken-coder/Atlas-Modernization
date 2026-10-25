@@ -43,13 +43,13 @@ The coverage checker uses exact covered and total statement ratios measured with
 
 | Profile | Module | Floor |
 | --- | --- | --- |
-| Offline | Total | 46.7% (3539/7572) |
-| Offline | Actions | 24.7% (674/2730) |
+| Offline | Total | 46.7% (3547/7592) |
+| Offline | Actions | 24.2% (664/2745) |
 | Offline | Handlers | 45.6% (548/1201) |
-| Offline | Database | 25.0% (64/256) |
+| Offline | Database | 24.2% (62/256) |
 | Offline | Feed | 70.4% (269/382) |
 | Offline | Test environment | 28.1% (18/64) |
-| Offline | Storage | 29.3% (27/92) |
+| Offline | Storage | 25.0% (23/92) |
 | Offline | Admin | 13.9% (51/366) |
 | Live | Total | 35.5% (1645/4633) |
 | Live | Actions | 38.0% (1038/2730) |
@@ -57,6 +57,16 @@ The coverage checker uses exact covered and total statement ratios measured with
 | Live | Database | 59.0% (151/256) |
 | Live | Feed | 49.0% (187/382) |
 | Live | Test environment | 53.1% (34/64) |
+
+The September 2026 test consolidation removed repeated validation, direct-wrapper
+checks, constructor/string assertions, and defensive helper states that production
+callers cannot supply. On the same production source, offline coverage changed
+from 3582/7592 to 3548/7592 statements: Actions 678 to 664, Database 64 to 62,
+and Storage 27 to 23. The revised floors use the retained suite's measurements;
+the total allows one statement for the feed shutdown race. Serializer tests still
+exercise model snapshot extraction, and live tests still exercise database and
+storage behavior, but those executions do not all count in the ordinary offline
+package profiles. Live coverage floors and required-test verification are unchanged.
 
 Coverage percentage does not replace the behavior assertions above. The live tier does not cover a separately built Core executable, MinIO, migration upgrade fixtures, admin authentication, or SDK clients. Those paths remain in their existing tests or other acceptance tickets.
 

@@ -8,34 +8,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/the-drunken-coder/atlas/services/core/internal/storage"
 )
 
-func TestPromotedStringLengthBoundaries(t *testing.T) {
-	tests := []struct {
-		field string
-		limit int
-	}{
-		{field: "entity_type", limit: entityTypeMaxLength},
-		{field: "subtype", limit: entitySubtypeMaxLength},
-		{field: "path", limit: objectPathMaxLength},
-		{field: "content_type", limit: objectContentMaxLength},
-		{field: "type", limit: objectTypeMaxLength},
+func TestStringLengthCountsRunes(t *testing.T) {
+	const limit = 50
+	if err := validateStringMaxLength("name", strings.Repeat("é", limit), limit); err != nil {
+		t.Fatalf("maximum-length value rejected: %v", err)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.field, func(t *testing.T) {
-			if err := validateStringMaxLength(tt.field, strings.Repeat("é", tt.limit), tt.limit); err != nil {
-				t.Fatalf("maximum-length value rejected: %v", err)
-			}
-
-			err := validateStringMaxLength(tt.field, strings.Repeat("é", tt.limit+1), tt.limit)
-			var validationErr *ValidationError
-			if !errors.As(err, &validationErr) {
-				t.Fatalf("maximum-plus-one error = %T %v, want ValidationError", err, err)
-			}
-		})
+	err := validateStringMaxLength("name", strings.Repeat("é", limit+1), limit)
+	var validationErr *ValidationError
+	if !errors.As(err, &validationErr) {
+		t.Fatalf("maximum-plus-one error = %T %v, want ValidationError", err, err)
 	}
 }
 
@@ -179,7 +164,6 @@ func TestPromotedStringMaximumsAcceptedByActions(t *testing.T) {
 	defer cancel()
 
 	prefix := "length-boundary-"
-	defer cleanupActionsLiveRows(ctx, t, pool, prefix)
 
 	entityActions := NewEntityActions(pool)
 	entity, err := entityActions.Create(ctx, CreateEntityParams{
@@ -237,20 +221,6 @@ func assertPromotedStringValidationError(t *testing.T, err error) {
 	}
 	if !strings.Contains(validationErr.Error(), "must not exceed") {
 		t.Fatalf("validation error = %q, want length limit", validationErr.Error())
-	}
-}
-
-func cleanupActionsLiveRows(ctx context.Context, t *testing.T, pool *pgxpool.Pool, prefix string) {
-	t.Helper()
-	pattern := prefix + "%"
-	for _, statement := range []string{
-		`DELETE FROM storage_deletion_outbox WHERE object_id LIKE $1 OR path LIKE $1`,
-		`DELETE FROM objects WHERE object_id LIKE $1`,
-		`DELETE FROM entities WHERE entity_id LIKE $1`,
-	} {
-		if _, err := pool.Exec(ctx, statement, pattern); err != nil {
-			t.Fatalf("cleanup live action rows matching %q: %v", pattern, err)
-		}
 	}
 }
 

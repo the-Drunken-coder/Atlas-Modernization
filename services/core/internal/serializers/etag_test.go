@@ -9,11 +9,3 @@ func TestStrongETagUsesResourceVersion(t *testing.T) {
 		t.Fatalf("etag %q != want %q", etag, want)
 	}
 }
-
-func TestStrongETagUsesMinimumValidVersion(t *testing.T) {
-	etag := StrongETag(1)
-	want := `"v1"`
-	if etag != want {
-		t.Fatalf("etag %q != want %q", etag, want)
-	}
-}

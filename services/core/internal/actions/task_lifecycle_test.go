@@ -53,7 +53,6 @@ func TestTaskLifecycleIdempotencyOrderingAndRuntimeFencing(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	assetID := fmt.Sprintf("tasking-asset-%d", time.Now().UnixNano())
-	defer cleanupFinalBlobValidationRowsWithTimeout(t, pool, assetID, "")
 
 	entities := NewEntityActions(pool)
 	createdEntity, err := entities.Create(ctx, CreateEntityParams{EntityID: assetID, EntityType: "asset"})
@@ -257,7 +256,6 @@ func TestRuntimeManifestEventsCarryReasonAndEntityUpdatesDoNot(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	assetID := fmt.Sprintf("runtime-event-reason-%d", time.Now().UnixNano())
-	defer cleanupFinalBlobValidationRowsWithTimeout(t, pool, assetID, "")
 
 	entities := NewEntityActions(pool)
 	if _, err := entities.Create(ctx, CreateEntityParams{EntityID: assetID, EntityType: "asset"}); err != nil {
@@ -330,7 +328,6 @@ func TestDeliverableHoldsRuntimeFenceDuringTaskSelection(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	assetID := fmt.Sprintf("deliverable-race-asset-%d", time.Now().UnixNano())
-	defer cleanupFinalBlobValidationRowsWithTimeout(t, pool, assetID, "")
 
 	entities := NewEntityActions(pool)
 	if _, err := entities.Create(ctx, CreateEntityParams{EntityID: assetID, EntityType: "asset"}); err != nil {
@@ -451,18 +448,17 @@ func waitForDatabaseLockWait(t testing.TB, pool *pgxpool.Pool) {
 }
 
 func TestRuntimeStopFailsEveryNonterminalStateAndIsIdempotent(t *testing.T) {
-	pool := openActionsTestPool(t)
 	for _, status := range []protocol.TaskStatus{
 		protocol.TaskStatusPending,
 		protocol.TaskStatusAcknowledged,
 		protocol.TaskStatusInProgress,
 	} {
 		t.Run(string(status), func(t *testing.T) {
+			pool := openActionsTestPool(t)
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
 			statusName := strings.ReplaceAll(string(status), "_", "-")
 			assetID := fmt.Sprintf("stop-%s-%d", statusName, time.Now().UnixNano())
-			defer cleanupFinalBlobValidationRowsWithTimeout(t, pool, assetID, "")
 
 			entities := NewEntityActions(pool)
 			if _, err := entities.Create(ctx, CreateEntityParams{EntityID: assetID, EntityType: "asset"}); err != nil {
@@ -559,7 +555,6 @@ func TestRuntimeStopIgnoresMissingAndStaleRuntimeIDs(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	assetID := fmt.Sprintf("stop-stale-%d", time.Now().UnixNano())
-	defer cleanupFinalBlobValidationRowsWithTimeout(t, pool, assetID, "")
 
 	tasks := NewTaskActionsWithCatalog(pool, fixtureTaskCatalog(t))
 	if err := tasks.StopRuntime(ctx, "missing-stop-asset", "missing-runtime"); err != nil {
@@ -619,7 +614,6 @@ func TestRuntimeRegistrationCannotReactivateRetiredRuntimeIDs(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	assetID := fmt.Sprintf("runtime-generation-%d", time.Now().UnixNano())
-	defer cleanupFinalBlobValidationRowsWithTimeout(t, pool, assetID, "")
 
 	if _, err := NewEntityActions(pool).Create(ctx, CreateEntityParams{EntityID: assetID, EntityType: "asset"}); err != nil {
 		t.Fatalf("create Asset: %v", err)
@@ -666,12 +660,12 @@ func TestRuntimeRegistrationCannotReactivateRetiredRuntimeIDs(t *testing.T) {
 }
 
 func TestRuntimeTaskDrainsUseCommittedBatches(t *testing.T) {
-	pool := openActionsTestPool(t)
 	t.Run("restart continues an interrupted drain", func(t *testing.T) {
+		pool := openActionsTestPool(t)
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		assetID := fmt.Sprintf("restart-batch-%d", time.Now().UnixNano())
-		defer cleanupFinalBlobValidationRowsWithTimeout(t, pool, assetID, "")
+
 		if _, err := NewEntityActions(pool).Create(ctx, CreateEntityParams{EntityID: assetID, EntityType: "asset"}); err != nil {
 			t.Fatalf("create restart batch Asset: %v", err)
 		}
@@ -724,10 +718,11 @@ func TestRuntimeTaskDrainsUseCommittedBatches(t *testing.T) {
 	})
 
 	t.Run("stop drains every committed batch", func(t *testing.T) {
+		pool := openActionsTestPool(t)
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		assetID := fmt.Sprintf("stop-batch-%d", time.Now().UnixNano())
-		defer cleanupFinalBlobValidationRowsWithTimeout(t, pool, assetID, "")
+
 		if _, err := NewEntityActions(pool).Create(ctx, CreateEntityParams{EntityID: assetID, EntityType: "asset"}); err != nil {
 			t.Fatalf("create stop batch Asset: %v", err)
 		}
@@ -756,10 +751,11 @@ func TestRuntimeTaskDrainsUseCommittedBatches(t *testing.T) {
 	})
 
 	t.Run("stop finishes an interrupted replacement drain", func(t *testing.T) {
+		pool := openActionsTestPool(t)
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		assetID := fmt.Sprintf("stop-replacement-batch-%d", time.Now().UnixNano())
-		defer cleanupFinalBlobValidationRowsWithTimeout(t, pool, assetID, "")
+
 		if _, err := NewEntityActions(pool).Create(ctx, CreateEntityParams{EntityID: assetID, EntityType: "asset"}); err != nil {
 			t.Fatalf("create replacement Asset: %v", err)
 		}
@@ -796,10 +792,11 @@ func TestRuntimeTaskDrainsUseCommittedBatches(t *testing.T) {
 	})
 
 	t.Run("explicit stop wins a replacement drain race", func(t *testing.T) {
+		pool := openActionsTestPool(t)
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		assetID := fmt.Sprintf("stop-race-batch-%d", time.Now().UnixNano())
-		defer cleanupFinalBlobValidationRowsWithTimeout(t, pool, assetID, "")
+
 		if _, err := NewEntityActions(pool).Create(ctx, CreateEntityParams{EntityID: assetID, EntityType: "asset"}); err != nil {
 			t.Fatalf("create stop race Asset: %v", err)
 		}
@@ -856,7 +853,6 @@ func TestTerminalLifecycleOperationsReplayExactlyAfterRuntimeReplacement(t *test
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	assetID := fmt.Sprintf("terminal-replay-%d", time.Now().UnixNano())
-	defer cleanupFinalBlobValidationRowsWithTimeout(t, pool, assetID, "")
 
 	if _, err := NewEntityActions(pool).Create(ctx, CreateEntityParams{EntityID: assetID, EntityType: "asset"}); err != nil {
 		t.Fatalf("create Asset: %v", err)
@@ -1039,7 +1035,6 @@ func TestConcurrentTaskCreateIdempotency(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	assetID := fmt.Sprintf("tasking-idempotency-%d", time.Now().UnixNano())
-	defer cleanupFinalBlobValidationRowsWithTimeout(t, pool, assetID, "")
 
 	entities := NewEntityActions(pool)
 	if _, err := entities.Create(ctx, CreateEntityParams{EntityID: assetID, EntityType: "asset"}); err != nil {
@@ -1108,7 +1103,6 @@ func TestEntityMutationAndDeletionRespectTaskingBoundary(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	assetID := fmt.Sprintf("tasking-entity-boundary-%d", time.Now().UnixNano())
-	defer cleanupFinalBlobValidationRowsWithTimeout(t, pool, assetID, "")
 
 	entities := NewEntityActions(pool)
 	if _, err := entities.Create(ctx, CreateEntityParams{EntityID: assetID, EntityType: "asset"}); err != nil {
@@ -1157,7 +1151,6 @@ func TestDeliverableRejectsStoredUnknownCommand(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	assetID := fmt.Sprintf("unknown-command-asset-%d", time.Now().UnixNano())
-	defer cleanupFinalBlobValidationRowsWithTimeout(t, pool, assetID, "")
 
 	if _, err := NewEntityActions(pool).Create(ctx, CreateEntityParams{EntityID: assetID, EntityType: "asset"}); err != nil {
 		t.Fatalf("create Asset: %v", err)
@@ -1193,7 +1186,6 @@ func TestTaskCompletionPreservesExplicitNullOutput(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	assetID := fmt.Sprintf("tasking-null-output-%d", time.Now().UnixNano())
-	defer cleanupFinalBlobValidationRowsWithTimeout(t, pool, assetID, "")
 
 	if _, err := NewEntityActions(pool).Create(ctx, CreateEntityParams{EntityID: assetID, EntityType: "asset"}); err != nil {
 		t.Fatalf("create Asset: %v", err)
@@ -1244,7 +1236,6 @@ func TestImmediateTimeoutReconciliationCommitsBoundedBatches(t *testing.T) {
 	defer cancel()
 	assetID := fmt.Sprintf("timeout-batch-asset-%d", time.Now().UnixNano())
 	taskPrefix := fmt.Sprintf("timeout-batch-task-%d", time.Now().UnixNano())
-	defer cleanupFinalBlobValidationRowsWithTimeout(t, pool, assetID, "")
 
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO tasks (

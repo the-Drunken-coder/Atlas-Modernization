@@ -82,27 +82,6 @@ func TestSerializeEntity(t *testing.T) {
 	}
 }
 
-func TestSerializeEntityEmptyJSONUsesEmptyComponents(t *testing.T) {
-	now := time.Now().UTC()
-	entity := &models.Entity{
-		EntityID:  "entity-empty-json",
-		Type:      "asset",
-		JSON:      []byte("{}"),
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-	result := serializers.SerializeEntity(entity)
-	if result == nil {
-		t.Fatal("expected non-nil response")
-	}
-	if result.Components == nil {
-		t.Fatal("SerializeEntity must return non-nil components for empty JSON blob")
-	}
-	if len(result.Components) != 0 {
-		t.Fatalf("expected empty components, got %d keys", len(result.Components))
-	}
-}
-
 func TestSerializeTaskUsesFlatProtocolResource(t *testing.T) {
 	now := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
 	progress := 0.4
@@ -447,34 +426,6 @@ func TestSerializeNil(t *testing.T) {
 	}
 }
 
-func TestSerializeEntityWithNilJSON(t *testing.T) {
-	now := time.Now().UTC()
-	entity := &models.Entity{
-		EntityID:  "entity-nil-json",
-		Type:      "asset",
-		Subtype:   nil,
-		Alias:     nil,
-		JSON:      nil, // nil JSON
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-
-	result := serializers.SerializeEntity(entity)
-
-	if result.EntityID != "entity-nil-json" {
-		t.Errorf("Expected EntityID entity-nil-json, got %s", result.EntityID)
-	}
-	if result.EntityType != "asset" {
-		t.Errorf("Expected EntityType asset, got %s", result.EntityType)
-	}
-	if result.Subtype != nil {
-		t.Error("Expected Subtype to be nil")
-	}
-	if result.Alias != nil {
-		t.Error("Expected Alias to be nil")
-	}
-}
-
 func TestSerializeEntityDoesNotEmitDuplicateTypeField(t *testing.T) {
 	now := time.Now().UTC()
 	entity := &models.Entity{
@@ -499,148 +450,6 @@ func TestSerializeEntityDoesNotEmitDuplicateTypeField(t *testing.T) {
 	}
 	if _, ok := response["type"]; ok {
 		t.Fatalf("entity response should not include duplicate type field: %s", string(encoded))
-	}
-}
-
-func TestSerializeEntityWithEmptyJSON(t *testing.T) {
-	now := time.Now().UTC()
-	entity := &models.Entity{
-		EntityID:  "entity-empty-json",
-		Type:      "track",
-		JSON:      []byte("{}"), // empty JSON object
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-
-	result := serializers.SerializeEntity(entity)
-
-	if result.EntityID != "entity-empty-json" {
-		t.Errorf("Expected EntityID entity-empty-json, got %s", result.EntityID)
-	}
-	if result.Components == nil {
-		t.Fatal("Expected Components to be non-nil (empty map) for empty JSON")
-	}
-	if len(result.Components) != 0 {
-		t.Errorf("Expected Components to be empty for empty JSON, got %d keys", len(result.Components))
-	}
-}
-
-func TestSerializeEntityWithMalformedJSON(t *testing.T) {
-	now := time.Now().UTC()
-	entity := &models.Entity{
-		EntityID:  "entity-bad-json",
-		Type:      "asset",
-		JSON:      []byte("not valid json{{{"), // malformed JSON
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-
-	// Should not panic — components degrade to an empty map when JSON cannot be decoded.
-	result := serializers.SerializeEntity(entity)
-
-	if result.EntityID != "entity-bad-json" {
-		t.Errorf("Expected EntityID entity-bad-json, got %s", result.EntityID)
-	}
-	if len(result.Components) != 0 {
-		t.Errorf("Expected empty components map for malformed JSON, got %#v", result.Components)
-	}
-}
-
-func TestSerializeObjectWithNilJSON(t *testing.T) {
-	now := time.Now().UTC()
-	obj := &models.MediaObject{
-		ObjectID:    "obj-nil-json",
-		Path:        nil, // nil path
-		ContentType: nil, // nil content type
-		Type:        nil, // nil type
-		JSON:        nil, // nil JSON
-		CreatedAt:   now,
-		UpdatedAt:   now,
-	}
-
-	result := serializers.SerializeObject(obj)
-
-	if result.ObjectID != "obj-nil-json" {
-		t.Errorf("Expected ObjectID obj-nil-json, got %s", result.ObjectID)
-	}
-	if result.Path != nil {
-		t.Error("Expected Path to be nil")
-	}
-	if result.ContentType != nil {
-		t.Error("Expected ContentType to be nil")
-	}
-	if result.Extra == nil {
-		t.Error("Expected Extra to be an empty object")
-	}
-}
-
-func TestSerializeObjectWithEmptyJSON(t *testing.T) {
-	now := time.Now().UTC()
-	obj := &models.MediaObject{
-		ObjectID:  "obj-empty-json",
-		JSON:      []byte("{}"), // empty JSON object
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-
-	result := serializers.SerializeObject(obj)
-
-	if result.ObjectID != "obj-empty-json" {
-		t.Errorf("Expected ObjectID obj-empty-json, got %s", result.ObjectID)
-	}
-	if result.Metadata.CreatedAt == "" || result.Metadata.UpdatedAt == "" {
-		t.Errorf("Expected metadata timestamps set, got created=%q updated=%q", result.Metadata.CreatedAt, result.Metadata.UpdatedAt)
-	}
-	if result.Extra == nil {
-		t.Error("Expected Extra to be an empty object")
-	}
-}
-
-func TestSerializeObjectWithMalformedJSON(t *testing.T) {
-	now := time.Now().UTC()
-	obj := &models.MediaObject{
-		ObjectID:  "obj-bad-json",
-		JSON:      []byte("malformed json data"), // malformed JSON
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-
-	// Should not panic - should handle gracefully
-	result := serializers.SerializeObject(obj)
-
-	if result.ObjectID != "obj-bad-json" {
-		t.Errorf("Expected ObjectID obj-bad-json, got %s", result.ObjectID)
-	}
-}
-
-func TestSerializeEntityWithMissingPromotedFields(t *testing.T) {
-	now := time.Now().UTC()
-	// JSON with no "components" key - just a random field
-	jsonData := map[string]interface{}{
-		"random_field": "some_value",
-	}
-	jsonBytes, _ := json.Marshal(jsonData)
-
-	entity := &models.Entity{
-		EntityID:  "entity-no-promoted",
-		Type:      "asset",
-		JSON:      jsonBytes,
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-
-	result := serializers.SerializeEntity(entity)
-
-	if result.EntityID != "entity-no-promoted" {
-		t.Errorf("Expected EntityID entity-no-promoted, got %s", result.EntityID)
-	}
-	// When there's no "components" key, GetComponents returns empty map (not nil)
-	// This is intentional - serializer always ensures a valid map for consistent API responses
-	if result.Components == nil {
-		t.Error("Expected Components to be initialized (not nil)")
-	}
-	if len(result.Components) != 0 {
-		t.Error("Expected Components to be empty when not present in JSON")
 	}
 }
 
@@ -804,6 +613,32 @@ func TestSerializedJSONResultsAreIsolated(t *testing.T) {
 			}
 			workers.Wait()
 			checkAndMutate()
+		})
+	}
+}
+
+func TestSerializeMissingOrCorruptJSON(t *testing.T) {
+	for name, raw := range map[string]json.RawMessage{
+		"nil":                     nil,
+		"empty":                   json.RawMessage(`{}`),
+		"malformed":               json.RawMessage(`invalid json`),
+		"missing promoted fields": json.RawMessage(`{"random_field":"some_value"}`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			entity := serializers.SerializeEntity(&models.Entity{EntityID: "entity-1", Type: "asset", JSON: raw})
+			if entity.EntityID != "entity-1" || entity.EntityType != "asset" || entity.Subtype != nil || entity.Alias != nil {
+				t.Fatalf("entity row fields = %#v", entity)
+			}
+			if entity.Components == nil || len(entity.Components) != 0 {
+				t.Fatalf("components = %#v, want empty object", entity.Components)
+			}
+			object := serializers.SerializeObject(&models.MediaObject{ObjectID: "object-1", JSON: raw})
+			if object.ObjectID != "object-1" || object.Path != nil || object.ContentType != nil || object.Type != nil {
+				t.Fatalf("object row fields = %#v", object)
+			}
+			if object.Extra == nil {
+				t.Fatal("object extra must be an object")
+			}
 		})
 	}
 }

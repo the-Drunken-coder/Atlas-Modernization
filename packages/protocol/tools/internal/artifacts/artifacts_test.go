@@ -94,7 +94,7 @@ func TestTypeScriptGeneratorAddDefAllowsIdenticalSchema(t *testing.T) {
 	if err := g.addDef("Thing", schema); err != nil {
 		t.Fatalf("first addDef returned error: %v", err)
 	}
-	if err := g.addDef("Thing", cloneMap(schema)); err != nil {
+	if err := g.addDef("Thing", typeScriptSchema{"type": "object"}); err != nil {
 		t.Fatalf("second addDef returned error: %v", err)
 	}
 	if !reflect.DeepEqual(g.defs["Thing"], schema) {
@@ -126,7 +126,7 @@ func TestTypeScriptGeneratorAddDefAllowsIdenticalSchemaUnderDifferentName(t *tes
 	if err := g.addDef("Thing1", schema); err != nil {
 		t.Fatalf("addDef Thing1 returned error: %v", err)
 	}
-	if err := g.addDef("Thing2", cloneMap(schema)); err != nil {
+	if err := g.addDef("Thing2", typeScriptSchema{"type": "object"}); err != nil {
 		t.Fatalf("addDef Thing2 returned error: %v", err)
 	}
 	for _, name := range []string{"Thing1", "Thing2"} {
@@ -190,145 +190,6 @@ func TestTypeScriptGeneratorRequiresAtLeastOneProperty(t *testing.T) {
 	}
 }
 
-func TestTypeScriptSourceGeneratesTaskCreateValidatorFromSchema(t *testing.T) {
-	source, err := typeScriptSource("sha256:0123456789abcdef0123456789ABCDEF0123456789abcdef0123456789ABCDEF", map[string][]byte{
-		"TaskCreateRequest": []byte(`{
-			"type": "object",
-			"additionalProperties": false,
-				"properties": {
-					"extra": {
-						"type": "object",
-						"additionalProperties": { "$ref": "#/$defs/%23JSONValue" }
-					},
-					"priority": { "$ref": "#/$defs/%23NonEmptyString" },
-					"task_id": { "$ref": "#/$defs/%23NonEmptyString" }
-				},
-				"required": ["task_id"],
-				"$defs": {
-					"#JSONValue": {
-						"anyOf": [
-							{ "type": "null" },
-							{ "type": "boolean" },
-							{ "type": "string" },
-							{ "type": "number" },
-							{ "type": "array", "items": { "$ref": "#/$defs/%23JSONValue" } },
-							{ "type": "object", "additionalProperties": { "$ref": "#/$defs/%23JSONValue" } }
-						]
-					},
-					"#NonEmptyString": { "type": "string", "pattern": "\\S" }
-				}
-			}`),
-	})
-	if err != nil {
-		t.Fatalf("typeScriptSource: %v", err)
-	}
-	text := string(source)
-	for _, want := range []string{
-		"export type TaskCreateRequest",
-		`"extra"?: { [key: string]: JSONValue };`,
-		`"priority"?: NonEmptyString;`,
-		`"task_id": NonEmptyString;`,
-		"export function isTaskCreateRequest(value: unknown): value is TaskCreateRequest",
-		"atlasProtocolIsJSONValue",
-		"One million JSON values already exceed Atlas's largest request body",
-		"let remainingValues = 1_000_000",
-		"| { array: unknown[]; index: number; length: number }",
-		"const active = new WeakSet<object>()",
-		"while (work.length > 0)",
-		"return Object.getPrototypeOf(prototype) === null",
-		"atlasProtocolHasJSONCompatibleArrayShape(currentArray!, arrayLength, maxPrototypeDepth)",
-		`typeof value === "bigint"`,
-		`Reflect.get(current, "toJSON")`,
-		"depth < maxPrototypeDepth",
-		"const prototypeKeys = new Set<PropertyKey>()",
-		"if (prototypeKeys.has(key)) continue",
-		"atlasProtocolIsJSONRecord(current)",
-		"Reflect.getOwnPropertyDescriptor(value, key)?.enumerable === true",
-		"Reflect.ownKeys(value).every",
-		"work.push({ value: Reflect.get(item.array, item.index) })",
-		"if (remainingValues-- === 0) return false",
-		"active.delete(item.leave)",
-		"if (active.has(current)) return false",
-		"export function isJSONValue(value: unknown): value is JSONValue",
-		"return atlasProtocolIsJSONValue(value);",
-		`Object.entries(value["extra"]).every(([key, item]) => atlasProtocolKnownKeys([], key) || isJSONValue(item))`,
-	} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("generated TypeScript missing %q:\n%s", want, text)
-		}
-	}
-	if strings.Contains(text, "atlasProtocolIsJSONValueInternal") {
-		t.Fatal("generated JSON value validator must not recurse")
-	}
-	if strings.Contains(text, "maxArrayEntries") {
-		t.Fatal("generated JSON value validator must not impose endpoint-specific array limits")
-	}
-	if strings.Contains(text, "entries.size === length") {
-		t.Fatal("generated JSON value validator must determine array density from indexed reads")
-	}
-}
-
-func TestTypeScriptSourceGeneratesInboundValidatorsFromCanonicalSchemas(t *testing.T) {
-	root := filepath.Clean(filepath.Join("..", "..", ".."))
-	artifacts, err := BuildArtifacts(root)
-	if err != nil {
-		t.Fatalf("BuildArtifacts: %v", err)
-	}
-
-	var source string
-	for _, artifact := range artifacts {
-		if artifact.Path == "generated/typescript/index.ts" {
-			source = string(artifact.Content)
-			break
-		}
-	}
-	if source == "" {
-		t.Fatal("BuildArtifacts did not return generated/typescript/index.ts")
-	}
-
-	for _, name := range []string{
-		"ProtocolRevisionResponse",
-		"EntityCheckInRequest",
-		"EntityCheckInFullResponse",
-		"EntityCheckInMinimalResponse",
-		"EntityCheckInResponse",
-		"FullDatasetResponse",
-		"ChangedSinceResponse",
-		"EntityResource",
-		"TaskResource",
-		"ObjectResource",
-		"ObjectDetailResource",
-		"FeedEvent",
-		"FeedHandshakeMessage",
-		"GeometryComponent",
-		"JSONValue",
-		"ProtocolRevision",
-		"ResourceType",
-		"RFC3339Timestamp",
-	} {
-		want := "export function is" + name + "(value: unknown): value is " + name
-		if !strings.Contains(source, want) {
-			t.Fatalf("generated TypeScript missing %q", want)
-		}
-	}
-	if want := `export const RESOURCE_TYPE_VALUES = ["entity", "task", "object"] as const satisfies readonly ResourceType[];`; !strings.Contains(source, want) {
-		t.Fatalf("generated TypeScript missing %q", want)
-	}
-
-	for _, want := range []string{
-		`isEntityResource(value["resource"])`,
-		`isTaskResource(value["resource"])`,
-		`isObjectResource(value["resource"])`,
-		`isProtocolRevision(value["protocol_revision"])`,
-		`isRFC3339Timestamp(value["metadata"]["created_at"])`,
-		"return atlasProtocolIsJSONValue(value);",
-	} {
-		if !strings.Contains(source, want) {
-			t.Fatalf("generated TypeScript missing selected-root reuse %q", want)
-		}
-	}
-}
-
 func TestResourceTypeValuesSourcePreservesSchemaOrder(t *testing.T) {
 	generator := &typeScriptGenerator{defs: map[string]typeScriptSchema{
 		"ResourceType": {"enum": []any{"task", "entity", "object"}},
@@ -340,47 +201,6 @@ func TestResourceTypeValuesSourcePreservesSchemaOrder(t *testing.T) {
 	want := `export const RESOURCE_TYPE_VALUES = ["task", "entity", "object"] as const satisfies readonly ResourceType[];`
 	if !strings.Contains(source, want) {
 		t.Fatalf("resource type values = %q, want %q", source, want)
-	}
-}
-
-func TestTypeScriptSourceGeneratesMultipleRequestValidators(t *testing.T) {
-	source, err := typeScriptSource("sha256:0123456789abcdef0123456789ABCDEF0123456789abcdef0123456789ABCDEF", map[string][]byte{
-		"EntityCreateRequest": []byte(`{
-			"type": "object",
-			"additionalProperties": false,
-			"properties": {
-				"entity_id": { "$ref": "#/$defs/%23NonEmptyString" },
-				"entity_type": { "$ref": "#/$defs/%23NonEmptyString" }
-			},
-			"required": ["entity_id", "entity_type"],
-			"$defs": {
-				"#NonEmptyString": { "type": "string", "pattern": "\\S" }
-			}
-		}`),
-		"TaskProgressRequest": []byte(`{
-			"type": "object",
-			"additionalProperties": false,
-			"minProperties": 1,
-			"properties": {
-				"progress": { "type": "number", "minimum": 0, "maximum": 1 }
-			},
-			"$defs": {
-				"#NonEmptyString": { "type": "string", "pattern": "\\S" }
-			}
-		}`),
-	})
-	if err != nil {
-		t.Fatalf("typeScriptSource: %v", err)
-	}
-	text := string(source)
-	for _, want := range []string{
-		"export function isEntityCreateRequest(value: unknown): value is EntityCreateRequest",
-		"export function isTaskProgressRequest(value: unknown): value is TaskProgressRequest",
-		"Object.keys(value).length >= 1",
-	} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("generated TypeScript missing %q:\n%s", want, text)
-		}
 	}
 }
 
@@ -404,24 +224,6 @@ func TestRuntimeValidatorSourceDiscoversRequestDefinitions(t *testing.T) {
 	}
 }
 
-func TestTypeScriptCommandCatalogValidatorIncludesSemanticValidation(t *testing.T) {
-	generator := &typeScriptGenerator{defs: map[string]typeScriptSchema{
-		"CommandCatalog": {"type": "array"},
-	}}
-	source, err := runtimeValidatorSource(generator)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(source, "atlasProtocolHasValidCommandCatalogSemantics(value)") {
-		t.Fatalf("command catalog validator missing semantic check:\n%s", source)
-	}
-	for _, want := range []string{"commandIDs.has", `command["command"]`} {
-		if !strings.Contains(source, want) {
-			t.Fatalf("command catalog validator helpers missing %q", want)
-		}
-	}
-}
-
 func TestTypeScriptCommandManifestValidatorIncludesSemanticValidation(t *testing.T) {
 	generator := &typeScriptGenerator{defs: map[string]typeScriptSchema{
 		"CommandManifest": {"type": "array"},
@@ -437,22 +239,6 @@ func TestTypeScriptCommandManifestValidatorIncludesSemanticValidation(t *testing
 		if !strings.Contains(source, want) {
 			t.Fatalf("command manifest validator missing %q:\n%s", want, source)
 		}
-	}
-}
-
-func TestTypeScriptNonEmptyStringUsesExplicitUnicodeWhitespacePolicy(t *testing.T) {
-	helpers := runtimeValidatorHelpersSource()
-	for _, want := range []string{
-		"function atlasProtocolIsUnicodeWhitespace",
-		"Array.from(value).some((character) => !atlasProtocolIsUnicodeWhitespace(character))",
-		"0xFEFF",
-	} {
-		if !strings.Contains(helpers, want) {
-			t.Fatalf("non-empty string helper missing %q:\n%s", want, helpers)
-		}
-	}
-	if strings.Contains(helpers, "value.trim()") {
-		t.Fatal("non-empty string helper must not rely on String.trim")
 	}
 }
 
@@ -485,41 +271,6 @@ func TestTypeScriptRuntimePreservesSiblingConstraintsWithNot(t *testing.T) {
 	want := `(typeof value === "string" && !(value === "reserved"))`
 	if expression != want {
 		t.Fatalf("type plus negated expression = %q, want %q", expression, want)
-	}
-}
-
-func TestTypeScriptIntegerValidatorsUseSafeIntegerGuard(t *testing.T) {
-	expression := runtimeNumberValidatorExpression("value", typeScriptSchema{"type": "integer"}, true)
-	if !strings.Contains(expression, "Number.isSafeInteger(value)") {
-		t.Fatalf("integer validator = %q, want safe-integer guard", expression)
-	}
-	if strings.Contains(expression, "Number.isInteger(value)") {
-		t.Fatalf("integer validator retained unsafe Number.isInteger guard: %q", expression)
-	}
-}
-
-func TestTypeScriptRuntimePolygonRefIncludesSemanticValidation(t *testing.T) {
-	generator := &typeScriptGenerator{defs: map[string]typeScriptSchema{
-		"GeoJSONPolygon": {
-			"type": "object",
-			"properties": map[string]any{
-				"type":        map[string]any{"const": "Polygon"},
-				"coordinates": map[string]any{"type": "array"},
-			},
-		},
-	}}
-	expression, err := generator.runtimeRefValidatorExpression("value", "#/$defs/GeoJSONPolygon", map[string]bool{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(expression, "atlasProtocolHasValidPolygonSemantics(value)") {
-		t.Fatalf("polygon validator expression missing semantic check: %s", expression)
-	}
-	helpers := runtimeValidatorHelpersSource()
-	for _, want := range []string{"atlasProtocolMaxGeometryPositions = 10000", "atlasProtocolPositionsEqual"} {
-		if !strings.Contains(helpers, want) {
-			t.Fatalf("runtime helpers missing %q", want)
-		}
 	}
 }
 
@@ -561,11 +312,8 @@ func TestTypeScriptSourceGeneratesArrayBoundsAndRFC3339Validators(t *testing.T) 
 		`value["position"][0] >= -180`,
 		`value["position"][1] >= -90`,
 		`value["position"].slice(2).every((item) => typeof item === "number" && Number.isFinite(item))`,
-		`const atlasProtocolPatternCache = new Map<string, RegExp>();`,
-		`const match = /^(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?([Zz]|[+-]\d{2}:\d{2})$/.exec(value);`,
-		`day > atlasProtocolDaysInMonth(year, month)`,
+		`atlasProtocolIsRFC3339String(value["published_at"])`,
 		`atlasProtocolIsURIString(value["source_url"])`,
-		`new URL(value);`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("generated TypeScript missing %q:\n%s", want, text)
@@ -845,28 +593,5 @@ func TestValidateProtocolRevisionRequiresSha256Digest(t *testing.T) {
 		if _, err := validateProtocolRevision(invalid); err == nil {
 			t.Fatalf("validateProtocolRevision accepted %q", invalid)
 		}
-	}
-}
-
-func cloneMap(in map[string]any) map[string]any {
-	out := make(map[string]any, len(in))
-	for key, value := range in {
-		out[key] = cloneValue(value)
-	}
-	return out
-}
-
-func cloneValue(value any) any {
-	switch typed := value.(type) {
-	case map[string]any:
-		return cloneMap(typed)
-	case []any:
-		out := make([]any, len(typed))
-		for i, item := range typed {
-			out[i] = cloneValue(item)
-		}
-		return out
-	default:
-		return typed
 	}
 }

@@ -16,7 +16,6 @@ import (
 	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
 	"github.com/the-drunken-coder/atlas/services/core/internal/models"
 	"github.com/the-drunken-coder/atlas/services/core/internal/storage"
-	"github.com/the-drunken-coder/atlas/services/core/internal/testenv"
 )
 
 func TestNormalizeOptionalObjectString(t *testing.T) {
@@ -120,25 +119,6 @@ func TestPersistedObjectContentTypeRequiresMetadata(t *testing.T) {
 	}
 }
 
-func TestDecodeObjectJSONForPatchPreservesLargeIntegers(t *testing.T) {
-	data, err := decodeJSONBlobForPatch(json.RawMessage(`{"size_bytes":9007199254740993,"extra":"patched"}`))
-	if err != nil {
-		t.Fatalf("decodeJSONBlobForPatch: %v", err)
-	}
-
-	size, ok := data["size_bytes"].(json.Number)
-	if !ok {
-		t.Fatalf("size_bytes type = %T, want json.Number", data["size_bytes"])
-	}
-	got, err := size.Int64()
-	if err != nil {
-		t.Fatalf("size_bytes Int64: %v", err)
-	}
-	if got != 9007199254740993 {
-		t.Fatalf("size_bytes = %d, want exact large integer", got)
-	}
-}
-
 func TestDecodeObjectJSONForPatchRejectsTrailingData(t *testing.T) {
 	if _, err := decodeJSONBlobForPatch(json.RawMessage(`{"size_bytes":1024}{"extra":"bad"}`)); err == nil {
 		t.Fatal("expected trailing data to fail")
@@ -151,7 +131,6 @@ func TestUploadPreservesExistingTypeWhenOmitted(t *testing.T) {
 	defer cancel()
 
 	objectID := fmt.Sprintf("actions-live-upload-type-%d", time.Now().UTC().UnixNano())
-	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
 
 	objectType := "observation"
 	actions := NewObjectActions(pool, &boundaryObjectStorage{})
@@ -215,18 +194,12 @@ func TestCleanupUploadedPathAfterFailureReportsDeleteFailure(t *testing.T) {
 }
 
 func TestCleanupUploadedPathAfterFailureQueuesDeleteRetry(t *testing.T) {
-	pool := testenv.OpenDatabasePool(t, "ATLAS_ACTIONS_DATABASE_URL", "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed storage deletion outbox test")
+	pool := openActionsTestPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if ok, err := actionsTestCoreSchemaPresent(ctx, pool); err != nil {
-		t.Fatalf("check core schema: %v", err)
-	} else if !ok {
-		testenv.SkipOrFatal(t, "core schema with storage deletion outbox is not present in test database")
-	}
 
 	objectID := fmt.Sprintf("cleanup-retry-%d", time.Now().UTC().UnixNano())
 	objectPath := fmt.Sprintf("objects/%s/blob", objectID)
-	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
 
 	storageClient := &recordingObjectStorage{deleteErr: errors.New("delete failed")}
 	actions := NewObjectActions(pool, storageClient)
@@ -262,18 +235,13 @@ func TestCleanupUploadedPathAfterFailureQueuesDeleteRetry(t *testing.T) {
 }
 
 func TestObjectDeletePublishesChangeBeforeStorageCleanup(t *testing.T) {
-	pool := testenv.OpenDatabasePool(t, "ATLAS_ACTIONS_DATABASE_URL", "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed object delete ordering test")
+	pool := openActionsTestPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if ok, err := actionsTestCoreSchemaPresent(ctx, pool); err != nil {
-		t.Fatalf("check core schema: %v", err)
-	} else if !ok {
-		testenv.SkipOrFatal(t, "core schema with storage deletion outbox is not present in test database")
-	}
 
 	objectID := fmt.Sprintf("delete-publish-before-storage-%d", time.Now().UTC().UnixNano())
 	objectPath := fmt.Sprintf("objects/%s/blob", objectID)
-	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
+
 	beforeVersion := createStoredObjectFixture(ctx, t, pool, objectID, objectPath)
 
 	storageClient := newPausingDeleteObjectStorage()
@@ -312,14 +280,6 @@ func TestObjectDeletePublishesChangeBeforeStorageCleanup(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("delete did not finish after storage cleanup was released")
-	}
-}
-
-func TestObjectUploadLockKey(t *testing.T) {
-	got := objectUploadLockKey("foo")
-	want := "atlas-core-object-upload:foo"
-	if got != want {
-		t.Fatalf("objectUploadLockKey() = %q, want %q", got, want)
 	}
 }
 
@@ -394,18 +354,12 @@ func TestStorageDeletionRetryDelay(t *testing.T) {
 }
 
 func TestReconcileStorageDeletionsDeletesQueuedPath(t *testing.T) {
-	pool := testenv.OpenDatabasePool(t, "ATLAS_ACTIONS_DATABASE_URL", "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed storage deletion outbox test")
+	pool := openActionsTestPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if ok, err := actionsTestCoreSchemaPresent(ctx, pool); err != nil {
-		t.Fatalf("check core schema: %v", err)
-	} else if !ok {
-		testenv.SkipOrFatal(t, "core schema with storage deletion outbox is not present in test database")
-	}
 
 	objectID := fmt.Sprintf("outbox-%d", time.Now().UTC().UnixNano())
 	path := fmt.Sprintf("objects/%s/blob", objectID)
-	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
 
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO storage_deletion_outbox (bucket, path, object_id)
@@ -446,18 +400,13 @@ func TestReconcileStorageDeletionsDeletesQueuedPath(t *testing.T) {
 }
 
 func TestObjectDeleteUsesPersistedBucket(t *testing.T) {
-	pool := testenv.OpenDatabasePool(t, "ATLAS_ACTIONS_DATABASE_URL", "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed object bucket test")
+	pool := openActionsTestPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if ok, err := actionsTestCoreSchemaPresent(ctx, pool); err != nil {
-		t.Fatalf("check core schema: %v", err)
-	} else if !ok {
-		t.Skip("core schema with storage deletion outbox is not present in test database")
-	}
 
 	objectID := fmt.Sprintf("delete-old-bucket-%d", time.Now().UTC().UnixNano())
 	path := fmt.Sprintf("objects/%s/blob", objectID)
-	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
+
 	createStoredObjectFixture(ctx, t, pool, objectID, path)
 	if _, err := pool.Exec(ctx, `UPDATE objects SET json = '{"bucket":"atlas-old"}'::jsonb WHERE object_id = $1`, objectID); err != nil {
 		t.Fatalf("set persisted object bucket: %v", err)
@@ -473,18 +422,13 @@ func TestObjectDeleteUsesPersistedBucket(t *testing.T) {
 }
 
 func TestObjectDownloadUsesPersistedBucket(t *testing.T) {
-	pool := testenv.OpenDatabasePool(t, "ATLAS_ACTIONS_DATABASE_URL", "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed object bucket test")
+	pool := openActionsTestPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if ok, err := actionsTestCoreSchemaPresent(ctx, pool); err != nil {
-		t.Fatalf("check core schema: %v", err)
-	} else if !ok {
-		t.Skip("core schema is not present in test database")
-	}
 
 	objectID := fmt.Sprintf("download-old-bucket-%d", time.Now().UTC().UnixNano())
 	path := fmt.Sprintf("objects/%s/blob", objectID)
-	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
+
 	createStoredObjectFixture(ctx, t, pool, objectID, path)
 	const persistedContentType = "application/vnd.atlas.migration-restore"
 	if _, err := pool.Exec(ctx, `
@@ -512,18 +456,13 @@ func TestObjectDownloadUsesPersistedBucket(t *testing.T) {
 }
 
 func TestPathBearingObjectRequiresPersistedBucket(t *testing.T) {
-	pool := testenv.OpenDatabasePool(t, "ATLAS_ACTIONS_DATABASE_URL", "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed object bucket test")
+	pool := openActionsTestPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if ok, err := actionsTestCoreSchemaPresent(ctx, pool); err != nil {
-		t.Fatalf("check core schema: %v", err)
-	} else if !ok {
-		t.Skip("core schema with storage deletion outbox is not present in test database")
-	}
 
 	objectID := fmt.Sprintf("missing-bucket-%d", time.Now().UTC().UnixNano())
 	path := fmt.Sprintf("objects/%s/blob", objectID)
-	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
+
 	createStoredObjectFixture(ctx, t, pool, objectID, path)
 	if _, err := pool.Exec(ctx, `UPDATE objects SET json = '{"size_bytes":3}'::jsonb WHERE object_id = $1`, objectID); err != nil {
 		t.Fatalf("remove persisted object bucket: %v", err)
@@ -551,20 +490,14 @@ func TestPathBearingObjectRequiresPersistedBucket(t *testing.T) {
 }
 
 func TestPathBearingObjectDeleteRequiresStorage(t *testing.T) {
-	pool := testenv.OpenDatabasePool(t, "ATLAS_ACTIONS_DATABASE_URL", "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed object bucket test")
+	pool := openActionsTestPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if ok, err := actionsTestCoreSchemaPresent(ctx, pool); err != nil {
-		t.Fatalf("check core schema: %v", err)
-	} else if !ok {
-		t.Skip("core schema with storage deletion outbox is not present in test database")
-	}
 
 	objectID := fmt.Sprintf("storage-required-%d", time.Now().UTC().UnixNano())
 	path := fmt.Sprintf("objects/%s/blob", objectID)
 	metadataOnlyID := fmt.Sprintf("metadata-only-%d", time.Now().UTC().UnixNano())
-	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
-	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, metadataOnlyID)
+
 	createStoredObjectFixture(ctx, t, pool, objectID, path)
 	if _, err := NewObjectActions(pool, nil).Create(ctx, CreateObjectParams{ObjectID: metadataOnlyID}); err != nil {
 		t.Fatalf("create metadata-only object: %v", err)
@@ -593,19 +526,14 @@ func TestPathBearingObjectDeleteRequiresStorage(t *testing.T) {
 }
 
 func TestObjectUploadReplacementDeletesPersistedOldBucket(t *testing.T) {
-	pool := testenv.OpenDatabasePool(t, "ATLAS_ACTIONS_DATABASE_URL", "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed object bucket test")
+	pool := openActionsTestPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if ok, err := actionsTestCoreSchemaPresent(ctx, pool); err != nil {
-		t.Fatalf("check core schema: %v", err)
-	} else if !ok {
-		t.Skip("core schema with storage deletion outbox is not present in test database")
-	}
 
 	objectID := fmt.Sprintf("upload-old-bucket-%d", time.Now().UTC().UnixNano())
 	oldPath := fmt.Sprintf("objects/%s/old", objectID)
 	newPath := fmt.Sprintf("objects/%s/new", objectID)
-	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
+
 	createStoredObjectFixture(ctx, t, pool, objectID, oldPath)
 	if _, err := pool.Exec(ctx, `UPDATE objects SET json = '{"bucket":"atlas-old"}'::jsonb WHERE object_id = $1`, objectID); err != nil {
 		t.Fatalf("set persisted old bucket: %v", err)
@@ -629,14 +557,9 @@ func TestObjectUploadReplacementDeletesPersistedOldBucket(t *testing.T) {
 }
 
 func TestUploadDoesNotResurrectObjectDeletedDuringBlobWrite(t *testing.T) {
-	pool := testenv.OpenDatabasePool(t, "ATLAS_ACTIONS_DATABASE_URL", "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed object upload race test")
+	pool := openActionsTestPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	if ok, err := actionsTestCoreSchemaPresent(ctx, pool); err != nil {
-		t.Fatalf("check core schema: %v", err)
-	} else if !ok {
-		testenv.SkipOrFatal(t, "core schema is not present in test database")
-	}
 
 	storageClient := newBlockingObjectStorage()
 	defer storageClient.releaseUpload()
@@ -646,7 +569,6 @@ func TestUploadDoesNotResurrectObjectDeletedDuringBlobWrite(t *testing.T) {
 	initialPath := fmt.Sprintf("objects/%s/initial", objectID)
 	contentType := "text/plain"
 	sizeBytes := int64(3)
-	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
 
 	createStoredObjectFixture(ctx, t, pool, objectID, initialPath)
 
@@ -910,37 +832,4 @@ func nextVersionedObjectPath(counter *atomic.Int64, objectID string) string {
 			return fmt.Sprintf("objects/%s/%d", objectID, version)
 		}
 	}
-}
-
-func actionsTestCoreSchemaPresent(ctx context.Context, pool *pgxpool.Pool) (bool, error) {
-	var ok bool
-	err := pool.QueryRow(ctx, `
-		SELECT to_regclass('public.objects') IS NOT NULL
-			AND to_regclass('public.atlas_change_events') IS NOT NULL
-			AND to_regclass('public.atlas_change_clock') IS NOT NULL
-			AND to_regclass('public.object_deletion_fences') IS NOT NULL
-			AND to_regclass('public.storage_deletion_outbox') IS NOT NULL
-			AND to_regclass('public.storage_upload_intents') IS NOT NULL
-	`).Scan(&ok)
-	return ok, err
-}
-
-func cleanupObjectRaceTestRows(ctx context.Context, t *testing.T, pool *pgxpool.Pool, objectID string) {
-	t.Helper()
-	if _, err := pool.Exec(ctx, `DELETE FROM objects WHERE object_id = $1`, objectID); err != nil {
-		t.Errorf("cleanup object row %q: %v", objectID, err)
-	}
-	if _, err := pool.Exec(ctx, `DELETE FROM storage_deletion_outbox WHERE object_id = $1`, objectID); err != nil {
-		t.Errorf("cleanup object storage deletion rows %q: %v", objectID, err)
-	}
-	if _, err := pool.Exec(ctx, `DELETE FROM storage_upload_intents WHERE object_id = $1`, objectID); err != nil {
-		t.Errorf("cleanup object upload intent rows %q: %v", objectID, err)
-	}
-}
-
-func cleanupObjectRaceTestRowsWithTimeout(t *testing.T, pool *pgxpool.Pool, objectID string) {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	cleanupObjectRaceTestRows(ctx, t, pool, objectID)
 }

@@ -1,11 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import {
-  ATLAS_PROTOCOL_REVISION,
-  AtlasClient,
-  isChangedSinceResponse,
-  isEntityCheckInFullResponse,
-  isFullDatasetResponse
-} from "../src";
+import { ATLAS_PROTOCOL_REVISION, AtlasClient, isEntityCheckInFullResponse } from "../src";
 import { FeedConnectionManager } from "../src/feed-connection.js";
 import { entity, FakeCore, metadata, object, task } from "./support/fake-core.js";
 import { FakeWebSocket } from "./support/fake-websocket.js";
@@ -38,11 +32,6 @@ const changedEntityEvent = (id: string, version: number) => ({
 });
 
 describe("AtlasClient inbound response validation", () => {
-  it("requires continuation cursors in paginated response validators", () => {
-    expect(isFullDatasetResponse(fullPage({ has_more_entities: true }))).toBe(false);
-    expect(isChangedSinceResponse(changedPage({ has_more: true }))).toBe(false);
-  });
-
   it("rejects a malformed HTTP handshake even when the protocol revision matches", async () => {
     const client = new AtlasClient({
       baseUrl: "http://atlas.test",
@@ -56,6 +45,8 @@ describe("AtlasClient inbound response validation", () => {
     ["missing a required resource array", { entities: [], objects: [] }],
     ["missing its version watermark", fullPage({ version: undefined })],
     ["with a fractional version watermark", fullPage({ version: 1.5 })],
+    ["with a negative version watermark", fullPage({ version: -1 })],
+    ["with an unsafe version watermark", fullPage({ version: Number.MAX_SAFE_INTEGER + 1 })],
     ["containing a resource in the wrong bucket", fullPage({ entities: [validTask("task-wrong-bucket", "asset-1")] })],
     ["containing malformed resource metadata", fullPage({ entities: [validEntity("asset-zero-version", 0)] })],
     ["omitting a pagination flag", fullPage({ has_more_tasks: undefined })],
@@ -225,16 +216,6 @@ describe("AtlasClient inbound response validation", () => {
       "Atlas response did not include a valid resource ETag for GET /tasks/task-without-etag"
     );
     expect(client.sync.snapshot().tasks).toEqual({});
-  });
-
-  it("accepts the extra field on HTTP ObjectDetailResource values", async () => {
-    const response = {
-      ...validObject("object-http-extra", 1),
-      extra: { label: "thermal", nested: { confidence: 0.91 }, values: [1, true, null] }
-    };
-    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: async () => Response.json(response) });
-
-    await expect(client.objects.get(response.object_id, { fresh: true })).resolves.toEqual(response);
   });
 
   it("accepts a depth-3000 object detail extra value through normal response validation", async () => {

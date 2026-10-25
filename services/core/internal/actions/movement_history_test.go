@@ -41,10 +41,6 @@ func TestMovementCaptureBackfillAndAssociation(t *testing.T) {
 	a := NewEntityActions(pool)
 	id := fmt.Sprintf("movement-%d", time.Now().UnixNano())
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM entity_movement_samples WHERE entity_id=$1`, id)
-		_, _ = pool.Exec(ctx, `DELETE FROM entities WHERE entity_id=$1`, id)
-	})
 	entity, err := a.Create(ctx, CreateEntityParams{EntityID: id, EntityType: "track", Components: map[string]interface{}{"telemetry": map[string]interface{}{"latitude": 0.0, "longitude": 0.0, "speed_m_s": 0.0}}, MovementObservedAt: movementPtr(movementTime(now.Add(-time.Minute)))})
 	if err != nil {
 		t.Fatal(err)
@@ -203,10 +199,6 @@ func TestMovementTrailGapsAndRetention(t *testing.T) {
 	a := NewEntityActions(pool)
 	id := fmt.Sprintf("trail-%d", time.Now().UnixNano())
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM entity_movement_samples WHERE entity_id=$1`, id)
-		_, _ = pool.Exec(ctx, `DELETE FROM entities WHERE entity_id=$1`, id)
-	})
 	entity, err := a.Create(ctx, CreateEntityParams{EntityID: id, EntityType: "asset"})
 	if err != nil {
 		t.Fatal(err)
@@ -253,10 +245,6 @@ func TestMovementConcurrentWritersAndSnapshot(t *testing.T) {
 	a := NewEntityActions(pool)
 	id := fmt.Sprintf("movement-lock-%d", time.Now().UnixNano())
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM entity_movement_samples WHERE entity_id=$1`, id)
-		_, _ = pool.Exec(context.Background(), `DELETE FROM entities WHERE entity_id=$1`, id)
-	})
 	e, err := a.Create(ctx, CreateEntityParams{EntityID: id, EntityType: "track"})
 	if err != nil {
 		t.Fatal(err)
@@ -384,10 +372,6 @@ func TestMovementBulkImportDuplicatesAndRollback(t *testing.T) {
 	a := NewEntityActions(pool)
 	id := fmt.Sprintf("movement-bulk-%d", time.Now().UnixNano())
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM entity_movement_samples WHERE entity_id=$1`, id)
-		_, _ = pool.Exec(ctx, `DELETE FROM entities WHERE entity_id=$1`, id)
-	})
 	e, err := a.Create(ctx, CreateEntityParams{EntityID: id, EntityType: "track"})
 	if err != nil {
 		t.Fatal(err)

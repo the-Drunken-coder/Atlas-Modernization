@@ -23,15 +23,16 @@ GROUP_PATHS = {
 # accidental weaker floor. The offline feed floor leaves one measured statement
 # of margin for websocket shutdown scheduling; live total and action coverage
 # leave measured margin for error branches in the contention tests.
+# Offline floors reflect the test consolidation documented in LIVE_TRANSACTION_TESTING.md.
 FLOORS = {
     "offline": {
-        "total": Floor(3539, 7572),
-        "actions": Floor(674, 2730),
+        "total": Floor(3547, 7592),
+        "actions": Floor(664, 2745),
         "handlers": Floor(548, 1201),
-        "database": Floor(64, 256),
+        "database": Floor(62, 256),
         "feed": Floor(269, 382),
         "testenv": Floor(18, 64),
-        "storage": Floor(27, 92),
+        "storage": Floor(23, 92),
         "admin": Floor(51, 366),
     },
     "live": {

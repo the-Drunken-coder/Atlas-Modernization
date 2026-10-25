@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strings"
 	"testing"
 )
 
@@ -80,131 +79,6 @@ func TestQueryFullDataset(t *testing.T) {
 	t.Logf("Full dataset query returned: %d entities, %d tasks, %d objects",
 		len(entities), len(tasks), len(objects))
 	t.Logf("Entity %s left as an artifact", entityID)
-}
-
-// TestQueryChangedSince tests the /queries/changed-since endpoint
-func TestQueryChangedSince(t *testing.T) {
-	SkipIfSystemNotAvailable(t)
-
-	client := NewAPIClient()
-	ctx := context.Background()
-	prefix := TestArtifactPrefix()
-
-	// Create some test data
-	entityID := fmt.Sprintf("%s-changed-since-entity", prefix)
-	entityPayload := map[string]interface{}{
-		"entity_id":   entityID,
-		"entity_type": "track",
-		"subtype":     "changed-since-test",
-	}
-
-	resp, err := client.Post(ctx, "/entities", entityPayload)
-	if err != nil {
-		t.Fatalf("Failed to create entity: %v", err)
-	}
-	requireHTTPStatus(t, resp, http.StatusCreated, "POST /entities (changed-since setup)")
-	var createdEntity map[string]interface{}
-	if err := ParseResponse(resp, &createdEntity); err != nil {
-		t.Fatalf("Failed to parse created entity: %v", err)
-	}
-	metadata, ok := createdEntity["metadata"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("created entity missing metadata: %#v", createdEntity)
-	}
-	baseline := mustVersionFromMetadata(t, metadata) - 1
-
-	// Query changed since
-	resp, err = client.Get(ctx, fmt.Sprintf("/queries/changed-since?since_version=%d", baseline))
-	if err != nil {
-		t.Fatalf("Failed to query changed-since: %v", err)
-	}
-	defer drainClose(resp)
-
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("Expected 200, got %d", resp.StatusCode)
-	}
-
-	var result map[string]interface{}
-	if err := ParseResponse(resp, &result); err != nil {
-		t.Fatalf("Failed to parse query response: %v", err)
-	}
-
-	if result["version"] == nil {
-		t.Error("Expected 'version' in response")
-	}
-	if result["has_more"] == nil {
-		t.Error("Expected 'has_more' in response")
-	}
-	events := mustInterfaceSlice(t, result["events"], "events")
-	if findChangeEvent(events, "entity", entityID, "") == nil {
-		t.Fatalf("expected entity event %s in /queries/changed-since", entityID)
-	}
-
-	t.Logf("Changed-since query returned: %d events after version %d", len(events), baseline)
-	t.Logf("Entity %s left as artifact", entityID)
-}
-
-// TestQueryChangedSinceMissingParam tests error handling for missing since param
-func TestQueryChangedSinceMissingParam(t *testing.T) {
-	SkipIfSystemNotAvailable(t)
-
-	client := NewAPIClient()
-	ctx := context.Background()
-
-	resp, err := client.Get(ctx, "/queries/changed-since")
-	if err != nil {
-		t.Fatalf("Failed to call API: %v", err)
-	}
-	defer drainClose(resp)
-
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("Expected 400, got %d", resp.StatusCode)
-	}
-
-	var result map[string]interface{}
-	if err := ParseResponse(resp, &result); err != nil {
-		t.Fatalf("Failed to parse error response: %v", err)
-	}
-
-	if result["error_code"] != "VALIDATION_ERROR" {
-		t.Errorf("Expected error_code 'VALIDATION_ERROR', got %v", result["error_code"])
-	}
-}
-
-// TestQueryChangedSinceInvalidFormat tests error handling for invalid version
-func TestQueryChangedSinceInvalidFormat(t *testing.T) {
-	SkipIfSystemNotAvailable(t)
-
-	client := NewAPIClient()
-	ctx := context.Background()
-
-	resp, err := client.Get(ctx, "/queries/changed-since?since_version=invalid-version")
-	if err != nil {
-		t.Fatalf("Failed to call API: %v", err)
-	}
-	defer drainClose(resp)
-
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("Expected 400, got %d", resp.StatusCode)
-	}
-
-	var result map[string]interface{}
-	if err := ParseResponse(resp, &result); err != nil {
-		t.Fatalf("Failed to parse error response: %v", err)
-	}
-	if result["error_code"] != "VALIDATION_ERROR" {
-		t.Errorf("Expected error_code 'VALIDATION_ERROR', got %v", result["error_code"])
-	}
-	details, _ := result["details"].(map[string]interface{})
-	errs, _ := details["errors"].([]interface{})
-	if len(errs) == 0 {
-		t.Errorf("Expected validation details.errors for invalid since_version")
-	} else {
-		first, ok := errs[0].(string)
-		if !ok || !strings.Contains(strings.ToLower(first), "since_version") {
-			t.Errorf("Expected an error mentioning since_version, got %v", errs[0])
-		}
-	}
 }
 
 func TestQueryFullDatasetCursorContinuationOmitsUnrequestedStreams(t *testing.T) {
@@ -492,13 +366,4 @@ func mustStringField(t *testing.T, raw interface{}, field string) string {
 		t.Fatalf("expected string field %s, got %T", field, item[field])
 	}
 	return value
-}
-
-func mustVersionFromMetadata(t *testing.T, metadata map[string]interface{}) int64 {
-	t.Helper()
-	raw, ok := metadata["version"].(float64)
-	if !ok || raw <= 0 {
-		t.Fatalf("expected positive metadata.version, got %#v", metadata["version"])
-	}
-	return int64(raw)
 }

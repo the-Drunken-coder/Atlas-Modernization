@@ -1,83 +1,60 @@
 package actions
 
 import (
+	"errors"
 	"testing"
+
+	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
 )
 
-// TestValidateEntityComponents_NilAndEmpty tests nil and empty components
-func TestValidateEntityComponents_NilAndEmpty(t *testing.T) {
-	tests := []struct {
-		name       string
-		components map[string]interface{}
-		wantError  bool
+func TestProtocolValidationAdapters(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		validate func(map[string]interface{}) error
+		valid    map[string]interface{}
+		invalid  map[string]interface{}
+		detail   string
 	}{
 		{
-			name:       "nil components",
-			components: nil,
-			wantError:  false,
-		},
-		{
-			name:       "empty components",
-			components: map[string]interface{}{},
-			wantError:  false,
-		},
-		{
-			name: "custom components only",
-			components: map[string]interface{}{
+			name: "entity components", validate: ValidateEntityComponents,
+			valid: map[string]interface{}{
+				"status":       map[string]interface{}{"value": "idle"},
 				"custom_notes": "some notes",
-				"custom_data":  map[string]interface{}{"key": "value"},
 			},
-			wantError: false,
+			invalid: map[string]interface{}{"status": map[string]interface{}{"value": ""}},
+			detail:  "status.value",
 		},
 		{
-			name: "checkin components: status, heartbeat, telemetry",
-			components: map[string]interface{}{
-				"status": map[string]interface{}{
-					"value":       "active",
-					"last_update": "2024-01-01T00:00:00Z",
-				},
-				"heartbeat": map[string]interface{}{
-					"last_seen": "2024-01-01T00:00:00Z",
-				},
-				"telemetry": map[string]interface{}{
-					"latitude":  40.7,
-					"longitude": -73.9,
-				},
-			},
-			wantError: false,
+			name: "entity blob", validate: ValidateEntityBlob,
+			valid:   map[string]interface{}{"published_at": "2026-06-10T00:00:00Z", "callsign": "atlas-one"},
+			invalid: map[string]interface{}{"published_at": "2026-13-10T00:00:00Z"},
+			detail:  "published_at",
 		},
 		{
-			name: "status component alone",
-			components: map[string]interface{}{
-				"status": map[string]interface{}{
-					"value": "idle",
-				},
-			},
-			wantError: false,
+			name: "object blob", validate: ValidateObjectBlob,
+			valid:   map[string]interface{}{"size_bytes": int64(2048), "usage_hints": []interface{}{"camera_feed"}},
+			invalid: map[string]interface{}{"usage_hints": []interface{}{"thumbnail", 123}},
+			detail:  "usage_hints.1",
 		},
-		{
-			name: "heartbeat component alone",
-			components: map[string]interface{}{
-				"heartbeat": map[string]interface{}{
-					"last_seen": "2024-01-01T00:00:00Z",
-				},
-			},
-			wantError: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := ValidateEntityComponents(tt.components)
-			if tt.wantError {
-				if err == nil {
-					t.Errorf("ValidateEntityComponents() expected error but got none")
-				}
-			} else {
-				if err != nil {
-					t.Errorf("ValidateEntityComponents() expected no error but got: %v", err)
-				}
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.validate(tc.valid); err != nil {
+				t.Fatalf("valid input rejected: %v", err)
 			}
+			err := tc.validate(tc.invalid)
+			var validationErr *ValidationError
+			if !errors.As(err, &validationErr) || validationErr.Code != protocol.ErrorCodeValidationError {
+				t.Fatalf("invalid input error = %#v, want ValidationError", err)
+			}
+			assertValidationDetailsContain(t, err, tc.detail)
 		})
+	}
+}
+
+func TestEntityValidationAcceptsAbsentComponents(t *testing.T) {
+	for _, components := range []map[string]interface{}{nil, {}} {
+		if err := ValidateEntityComponents(components); err != nil {
+			t.Fatalf("components %#v rejected: %v", components, err)
+		}
 	}
 }

@@ -635,6 +635,8 @@ describe("AtlasClient sync: feed connections and recovery handoff", () => {
     );
 
     await Promise.all([first, second]);
+    await client.changedSince();
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
   it("does not apply a gapped feed event after its recovery is superseded by a failed recovery", async () => {

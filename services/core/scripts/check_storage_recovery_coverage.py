@@ -24,7 +24,9 @@ FLOORS = {
     "actions": Floor(431, 2730),
     "database": Floor(150, 256),
     "storage": Floor(48, 92),
-    "testenv": Floor(32, 64),
+    # Isolated-schema setup covers 24/64 statements; OpenDatabasePool is no
+    # longer exercised by this tier. Keep all production-code floors unchanged.
+    "testenv": Floor(24, 64),
 }
 
 
