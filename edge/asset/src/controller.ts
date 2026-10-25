@@ -108,6 +108,7 @@ export class AssetController {
   private coreDownSince: number | undefined;
   private coreLossRecovery = false;
   private coreLossRecoveryConfirmed = false;
+  private coreLossRecoveryRelinquished = false;
   private lastCoreLossRecoveryAttemptMs: number | undefined;
   private initiallyLandedAndDisarmed = false;
   private ready = false;
@@ -416,9 +417,12 @@ export class AssetController {
     // The engine reconciles against the fresh authoritative list on its next
     // ingest. Once recovery RTL is requested, the interrupted action is
     // finished locally and reported now, never resumed. Recovery retries
-    // survive reconnection until the aircraft confirms the request.
+    // survive reconnection until confirmation or fresh takeover telemetry.
     if (this.coreLossRecovery) {
-      this.recoveryTaskToFail ??= this.deps.engine.abandonActiveForRecovery();
+      const abandonedTaskId = this.deps.engine.abandonActiveForRecovery({
+        reholdOnGuided: this.coreLossRecoveryRelinquished
+      });
+      this.recoveryTaskToFail ??= abandonedTaskId;
       if (this.recoveryTaskToFail !== undefined) {
         const recoveryTask = tasks.find((task) => task.task_id === this.recoveryTaskToFail);
         if (
@@ -436,9 +440,10 @@ export class AssetController {
       } else if (this.coreLossRecoveryConfirmed) {
         this.log("info", "Recovery RTL already runs; the interrupted action is not resumed.");
       }
-      if (!this.coreLossRecoveryConfirmed) return;
+      if (!this.coreLossRecoveryConfirmed && !this.coreLossRecoveryRelinquished) return;
       this.coreLossRecovery = false;
       this.coreLossRecoveryConfirmed = false;
+      this.coreLossRecoveryRelinquished = false;
       this.lastCoreLossRecoveryAttemptMs = undefined;
     }
   }
@@ -447,9 +452,17 @@ export class AssetController {
     if (
       this.coreLossRecovery &&
       hasFreshControlTelemetry(snapshot, now) &&
-      (snapshot.mode === "RTL" || snapshot.mode === "LAND")
+      snapshot.customMode !== undefined &&
+      !snapshot.guided &&
+      !snapshot.mode.startsWith("UNKNOWN")
     ) {
-      this.coreLossRecoveryConfirmed = true;
+      if (snapshot.mode === "RTL" || snapshot.mode === "LAND") {
+        this.coreLossRecoveryConfirmed = true;
+      } else {
+        // Fresh takeover ends Atlas's retry duty, even if the RTL ACK was
+        // lost. Keep reconciliation pending until Core can record the failure.
+        this.coreLossRecoveryRelinquished = true;
+      }
     }
     const graceMs = this.config.coreLossGraceSeconds * 1000;
     const downMs = this.coreLossRecovery ? graceMs : now - (this.coreDownSince ?? now);
@@ -458,7 +471,7 @@ export class AssetController {
       graceMs,
       guided: snapshot.guided,
       activeCommand: this.deps.engine.activeCommand(),
-      recoveryRunning: this.coreLossRecoveryConfirmed,
+      recoveryRunning: this.coreLossRecoveryConfirmed || this.coreLossRecoveryRelinquished,
       telemetryFresh: hasFreshControlTelemetry(snapshot, now)
     });
     if (!shouldRecover || this.link === undefined) return;

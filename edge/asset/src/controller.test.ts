@@ -1,5 +1,5 @@
 import type { TaskResource } from "@the-drunken-coder/atlas-sdk";
-import { common, type MavLinkData } from "node-mavlink";
+import { ardupilotmega, common, type MavLinkData } from "node-mavlink";
 import { describe, expect, it, onTestFinished } from "vitest";
 import type { AssetConfig } from "./config.js";
 import {
@@ -153,8 +153,8 @@ describe("AssetController Core-loss recovery", () => {
     expect(closeCalls).toBe(1);
   });
 
-  it.each(["ack", "mode", "reconnect"] as const)(
-    "retries Core-loss RTL until confirmed by %s and never resumes interrupted work",
+  it.each(["ack", "mode", "reconnect", "LOITER", "SMART_RTL", "BRAKE"] as const)(
+    "reconciles Core-loss RTL after %s without resuming interrupted work",
     async (confirmation) => {
       let now = 1_000_000;
       const sent: MavLinkData[] = [];
@@ -299,7 +299,7 @@ describe("AssetController Core-loss recovery", () => {
       await waitFor(() => readyCalls > 0, "runtime readiness", false);
 
       // A takeoff starts under Atlas control.
-      tasks.push({
+      const takeoff = {
         task_id: "task-takeoff",
         asset_id: "quad-01",
         command: "flight.takeoff",
@@ -307,7 +307,8 @@ describe("AssetController Core-loss recovery", () => {
         status: "pending",
         created_at: new Date(now).toISOString(),
         updated_at: new Date(now).toISOString()
-      } as unknown as TaskResource);
+      } satisfies TaskResource;
+      tasks.push(takeoff);
       await waitFor(() => started.includes("task-takeoff"), "takeoff start", true);
       const takeoffSends = sent.length;
       expect(takeoffSends).toBeGreaterThan(0);
@@ -344,6 +345,72 @@ describe("AssetController Core-loss recovery", () => {
       } as never);
       await waitFor(() => rtlCount() >= before + 3, "RTL retry without matching confirmation", true, 4, 8);
       const confirmedCount = rtlCount();
+      if (confirmation === "reconnect") {
+        for (const stale of [false, true]) {
+          const beforeUncertainMode = rtlCount();
+          const uncertainAt = now;
+          while (now < uncertainAt + 4000) {
+            tracker.observeHeartbeat({
+              systemId: 1,
+              componentId: 1,
+              vehicleType: 2,
+              autopilot: 3,
+              baseMode: 128,
+              customMode: stale ? ardupilotmega.CopterMode.LOITER : 999,
+              receivedAtMs: stale ? now - 4000 : now
+            });
+            position(568, 8);
+            await new Promise((resolve) => setTimeout(resolve, 1));
+          }
+          expect(rtlCount()).toBe(beforeUncertainMode);
+          await waitFor(() => rtlCount() > beforeUncertainMode, "RTL retry after uncertain mode telemetry", true, 4, 8);
+        }
+      }
+      if (confirmation === "LOITER" || confirmation === "SMART_RTL" || confirmation === "BRAKE") {
+        const mode = ardupilotmega.CopterMode[confirmation];
+        const flightCommands = () =>
+          sent.filter(
+            (item) => item instanceof common.CommandLong || item instanceof common.SetPositionTargetGlobalInt
+          );
+        heartbeat(true, mode);
+        position(568, 8);
+        const beforeTakeover = flightCommands();
+        const takeoverAt = now;
+        await waitFor(() => now >= takeoverAt + 6000, "takeover without RTL acknowledgement", true, mode, 8);
+        expect(flightCommands()).toEqual(beforeTakeover);
+
+        tasks.splice(0, tasks.length, {
+          ...takeoff,
+          status: "in_progress",
+          acknowledged_at: new Date(now).toISOString(),
+          started_at: new Date(now).toISOString()
+        });
+        coreDown = false;
+        await waitFor(() => !controller.isCoreDown(), "Core reconnect in manual mode", true, mode, 8);
+        tasks.push({ ...takeoff, task_id: "task-after-takeover" });
+        const reconnectedAt = now;
+        await waitFor(() => now >= reconnectedAt + 3000, "new task handling in manual mode", true, mode, 8);
+        expect(failed).toContainEqual({
+          taskId: "task-after-takeover",
+          code: "precondition_failed",
+          message: expect.stringContaining("Requires Guided")
+        });
+        expect(started).toEqual(["task-takeoff"]);
+        expect(flightCommands()).toEqual(beforeTakeover);
+
+        // Fresh Guided control holds the pilot's position, both on the ground
+        // and in flight. It must never revive the old Core-loss RTL request.
+        const armed = confirmation !== "LOITER";
+        const guidedAt = now;
+        await waitFor(() => now >= guidedAt + 3000, "Guided return after takeover", armed, 4, armed ? 8 : 0);
+        const afterReturn = flightCommands().slice(beforeTakeover.length);
+        expect(afterReturn).toHaveLength(1);
+        expect(afterReturn[0]).toBeInstanceOf(common.SetPositionTargetGlobalInt);
+        expect(afterReturn[0]).toMatchObject({ latInt: 377_749_000, lonInt: -1_224_194_000, alt: armed ? 568 : 560 });
+        expect(rtlCount()).toBe(confirmedCount);
+        expect(failed.filter((entry) => entry.taskId === "task-takeoff")).toHaveLength(1);
+        return;
+      }
       if (confirmation === "ack") {
         feed("COMMAND_ACK", { command: common.MavCmd.NAV_RETURN_TO_LAUNCH, result: common.MavResult.ACCEPTED });
       } else if (confirmation === "mode") {

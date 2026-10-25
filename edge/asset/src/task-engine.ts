@@ -47,11 +47,18 @@ export function isFlightCommand(command: string): command is FlightCommand {
   );
 }
 
+type RecoveryProgress = {
+  highestAltitudeM: number;
+  lowestAltitudeM: number;
+  closestLaunchDistanceM: number;
+  expectedModeIndex: number;
+};
+
 type ActiveExecution = {
   task: AuthoritativeTask;
   startedAtMs: number;
   lastProgressAtMs: number;
-  lastProgressSnapshot: VehicleSnapshot;
+  recoveryProgress?: RecoveryProgress;
   startRemainingM?: number;
   bestRemainingM: number;
   settleSinceMs?: number;
@@ -171,11 +178,14 @@ export class TaskEngine {
   }
 
   /**
-   * Drop the active task without vehicle action because an external recovery
-   * (Core-loss RTL) already runs. Returns the abandoned task id so the caller
-   * can report the outcome once Core is reachable again.
+   * Drop the active task without vehicle action after Core-loss RTL was
+   * requested. Return its id for reconciliation. A takeover requires holding
+   * the new position when Guided returns, even if the task was already dropped.
    */
-  abandonActiveForRecovery(): string | undefined {
+  abandonActiveForRecovery(
+    { reholdOnGuided }: { reholdOnGuided: boolean } = { reholdOnGuided: false }
+  ): string | undefined {
+    this.reholdOnGuided ||= reholdOnGuided;
     if (this.active === undefined) return undefined;
     const taskId = this.active.task.taskId;
     this.active = undefined;
@@ -347,10 +357,21 @@ export class TaskEngine {
       task: candidate,
       startedAtMs: current.nowMs,
       lastProgressAtMs: current.nowMs,
-      lastProgressSnapshot: current.snapshot,
       bestRemainingM: remaining ?? Number.POSITIVE_INFINITY,
       expectedModes: expectedModesFor(candidate.command as FlightCommand)
     };
+    if (
+      (candidate.command === "flight.return_to_launch" || candidate.command === "flight.land") &&
+      current.snapshot.observation !== undefined
+    ) {
+      const altitudeM = current.snapshot.observation.altitudeMslM;
+      execution.recoveryProgress = {
+        highestAltitudeM: altitudeM,
+        lowestAltitudeM: altitudeM,
+        closestLaunchDistanceM: this.launchDistanceM(current.snapshot) ?? Number.POSITIVE_INFINITY,
+        expectedModeIndex: execution.expectedModes.indexOf(current.snapshot.mode)
+      };
+    }
     if (remaining !== undefined) execution.startRemainingM = remaining;
     this.active = execution;
     try {
@@ -492,7 +513,6 @@ export class TaskEngine {
     ) {
       if (remaining !== undefined) active.bestRemainingM = remaining;
       active.lastProgressAtMs = nowMs;
-      active.lastProgressSnapshot = snapshot;
     } else if (nowMs - active.lastProgressAtMs > this.config.progressTimeoutSeconds * 1000) {
       await this.failActive(
         "execution_failed",
@@ -511,18 +531,45 @@ export class TaskEngine {
   }
 
   private recoveryProgressed(active: ActiveExecution, snapshot: VehicleSnapshot): boolean {
-    if (active.task.command !== "flight.return_to_launch" && active.task.command !== "flight.land") return false;
-    const previous = active.lastProgressSnapshot;
-    const before = previous.observation;
-    const after = snapshot.observation;
-    if (before === undefined || after === undefined) return false;
-    // Native RTL can climb, return, then descend. A single distance-to-home
-    // minimum would misclassify its climb as a stall. Watch actual movement
-    // and expected mode transitions, retaining both stall and overall limits.
-    return (
-      (snapshot.mode !== previous.mode && active.expectedModes.includes(snapshot.mode)) ||
-      Math.abs(after.altitudeMslM - before.altitudeMslM) >= 0.5 ||
-      haversineM(before.latitudeDeg, before.longitudeDeg, after.latitudeDeg, after.longitudeDeg) >= 0.5
+    const progress = active.recoveryProgress;
+    const observation = snapshot.observation;
+    if (progress === undefined || observation === undefined) return false;
+    const modeIndex = active.expectedModes.indexOf(snapshot.mode);
+    let progressed = modeIndex > progress.expectedModeIndex;
+    if (progressed) progress.expectedModeIndex = modeIndex;
+    const returning = active.task.command === "flight.return_to_launch";
+    const altitudeM = observation.altitudeMslM;
+    // Only new best values count, so oscillating hover noise cannot reset the
+    // stall timer. RTL may climb first, then descend from that new peak.
+    if (returning && altitudeM >= progress.highestAltitudeM + 0.5) {
+      progress.highestAltitudeM = altitudeM;
+      progress.lowestAltitudeM = altitudeM;
+      progressed = true;
+    } else if (altitudeM <= progress.lowestAltitudeM - 0.5) {
+      progress.lowestAltitudeM = altitudeM;
+      progressed = true;
+    }
+    const launchDistanceM = this.launchDistanceM(snapshot);
+    if (returning && launchDistanceM !== undefined && launchDistanceM <= progress.closestLaunchDistanceM - 0.5) {
+      progress.closestLaunchDistanceM = launchDistanceM;
+      progressed = true;
+    }
+    return progressed;
+  }
+
+  private launchDistanceM(snapshot: VehicleSnapshot): number | undefined {
+    const observation = snapshot.observation;
+    if (
+      observation === undefined ||
+      snapshot.launchLatitudeDeg === undefined ||
+      snapshot.launchLongitudeDeg === undefined
+    )
+      return undefined;
+    return haversineM(
+      observation.latitudeDeg,
+      observation.longitudeDeg,
+      snapshot.launchLatitudeDeg,
+      snapshot.launchLongitudeDeg
     );
   }
 

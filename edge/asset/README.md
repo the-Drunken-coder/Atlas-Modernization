@@ -46,7 +46,10 @@ while running. Keep the credential-bearing file out of version control.
   only under Atlas control. Reconnection never resumes the interrupted action,
   and an ongoing landing is preserved. RTL retries at most once per second
   until an accepted acknowledgement or observed RTL/Land mode confirms it,
-  even if Core reconnects first. Host/SiK loss relies on the verified
+  even if Core reconnects first. Fresh telemetry showing another known mode
+  ends recovery retries and preserves takeover; returning to Guided holds
+  position and awaits fresh tasking. Stale or unknown modes never confirm
+  takeover. Host/SiK loss relies on the verified
   onboard heartbeat-loss failsafe (the host sends GCS heartbeats).
 - Every restart uses a fresh runtime identity under normal Core fencing.
   Telemetry resumes, but flight readiness waits for landed + disarmed state.
@@ -54,9 +57,10 @@ while running. Keep the credential-bearing file out of version control.
   mode confirmation; ongoing RTL, landing, or manual control is preserved.
   The runtime registration is left for the next process, whose fresh identity
   drains stale work.
-- Recovery Tasks track fresh aircraft movement and expected native mode
-  transitions for stall detection. Both stall and overall Task timeouts remain
-  active, and a timeout leaves the autopilot recovery running.
+- Recovery Tasks count new best climb altitude during RTL, distance toward
+  launch, descent altitude, and forward native mode transitions as progress.
+  Hover jitter does not reset the stall timer. Both stall and overall Task
+  timeouts remain active, and a timeout leaves the autopilot recovery running.
 
 ## Validation boundary
 

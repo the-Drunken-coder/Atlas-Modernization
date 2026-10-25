@@ -228,19 +228,22 @@ describe("TaskEngine", () => {
     async (command) => {
       const { engine, reports, setControlState } = setup();
       const recovery = task("task-1", command, {});
-      const observation = { ...guidedSnapshot().observation!, altitudeMslM: 580, relativeAltitudeM: 20 };
+      const observation = { ...guidedSnapshot().observation!, altitudeMslM: 960, relativeAltitudeM: 400 };
       const initial = guidedSnapshot({ observation });
       delete initial.batteryRemainingPercent;
       setControlState(initial, 1_000_000);
       await engine.ingest([recovery], initial, 1_000_000);
-      for (const elapsed of [20_000, 40_000, 301_000]) {
+      for (let second = 1; second <= 301; second++) {
+        const elapsed = second * 1000;
+        const altitude = command === "flight.return_to_launch" ? 400 + second : 400 - second;
         await engine.ingest(
           [{ ...recovery, status: "in_progress" }],
           guidedSnapshot({
             lastHeartbeatMs: 1_000_000 + elapsed,
             observation: {
               ...observation,
-              latitudeDeg: observation.latitudeDeg + elapsed / 1e8,
+              altitudeMslM: 560 + altitude,
+              relativeAltitudeM: altitude,
               observedAtMs: 1_000_000 + elapsed
             }
           }),
@@ -255,6 +258,53 @@ describe("TaskEngine", () => {
       });
     }
   );
+
+  it("observes RTL climb, transit home and descent from the climb peak", async () => {
+    const { engine, reports, sent, setControlState } = setup();
+    const recovery = task("task-1", "flight.return_to_launch", {});
+    const observation = guidedSnapshot().observation!;
+    const initial = guidedSnapshot({
+      observation: {
+        ...observation,
+        latitudeDeg: observation.latitudeDeg + 0.001,
+        altitudeMslM: 580,
+        relativeAltitudeM: 20
+      }
+    });
+    setControlState(initial, 1_000_000);
+    await engine.ingest([recovery], initial, 1_000_000);
+    const stages = [
+      { altitude: 22, offset: 0.001 },
+      { altitude: 24, offset: 0.001 },
+      { altitude: 24, offset: 0.0005 },
+      { altitude: 24, offset: 0 },
+      { altitude: 23, offset: 0 },
+      { altitude: 22, offset: 0 }
+    ];
+    for (const [index, stage] of stages.entries()) {
+      const nowMs = 1_000_000 + (index + 1) * 20_000;
+      await engine.ingest(
+        [{ ...recovery, status: "in_progress" }],
+        guidedSnapshot({
+          mode: "RTL",
+          customMode: 6,
+          guided: false,
+          lastHeartbeatMs: nowMs,
+          observation: {
+            ...observation,
+            latitudeDeg: observation.latitudeDeg + stage.offset,
+            altitudeMslM: 560 + stage.altitude,
+            relativeAltitudeM: stage.altitude,
+            observedAtMs: nowMs
+          }
+        }),
+        nowMs
+      );
+    }
+    expect(engine.hasActiveTask()).toBe(true);
+    expect(reports.filter((report) => report.type === "fail")).toEqual([]);
+    expect(sent).toHaveLength(1);
+  });
 
   it.each(["flight.return_to_launch", "flight.land"])("still fails stalled %s", async (command) => {
     const { engine, reports, setControlState } = setup();
@@ -277,6 +327,46 @@ describe("TaskEngine", () => {
       code: "execution_failed",
       message: expect.stringContaining("No progress")
     });
+  });
+
+  it.each([
+    ["flight.return_to_launch", "RTL", 6],
+    ["flight.land", "LAND", 9]
+  ] as const)("reports stalled %s despite hover jitter", async (command, mode, customMode) => {
+    const { engine, sent, reports, setControlState } = setup();
+    const recovery = task("task-1", command, {});
+    const observation = { ...guidedSnapshot().observation!, altitudeMslM: 580, relativeAltitudeM: 20 };
+    const initial = guidedSnapshot({ observation });
+    setControlState(initial, 1_000_000);
+    await engine.ingest([recovery], initial, 1_000_000);
+    for (let second = 1; second <= 32; second++) {
+      const jitter = second % 2 === 0 ? 0.3 : -0.3;
+      const nowMs = 1_000_000 + second * 1000;
+      await engine.ingest(
+        [{ ...recovery, status: "in_progress" }],
+        guidedSnapshot({
+          mode,
+          customMode,
+          guided: false,
+          lastHeartbeatMs: nowMs,
+          observation: {
+            ...observation,
+            latitudeDeg: observation.latitudeDeg + jitter / 111_000,
+            altitudeMslM: 580 + jitter,
+            relativeAltitudeM: 20 + jitter,
+            observedAtMs: nowMs
+          }
+        }),
+        nowMs
+      );
+    }
+    expect(reports).toContainEqual({
+      type: "fail",
+      taskId: "task-1",
+      code: "execution_failed",
+      message: "No progress for 30s."
+    });
+    expect(sent).toHaveLength(1);
   });
 
   it("completes takeoff after reaching altitude and settling into hover", async () => {
