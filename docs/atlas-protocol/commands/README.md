@@ -1,6 +1,6 @@
 # Adding a Command
 
-Atlas Protocol owns every Command. The generated production catalog is currently empty, and a Command becomes real only when its complete cross-module behavior lands together.
+Atlas Protocol owns every Command. A Command becomes real only when its complete cross-module behavior lands together. The production catalog currently contains the `flight.*` Commands.
 
 1. Define stable operator intent, scheduling, cancellation, progress, preconditions, and the observable completion guarantee.
 2. Add or reuse named input and optional bounded-output schemas in `packages/protocol/schema/jsonschema/atlas.schema.json`.

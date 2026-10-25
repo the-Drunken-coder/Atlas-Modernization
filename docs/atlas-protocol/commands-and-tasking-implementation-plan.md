@@ -1,10 +1,10 @@
 # Commands and Tasking Implementation Plan
 
-This is the execution companion to [Commands and Tasking](commands-and-tasking.md). That document defines the target state. This document defines how the repository reaches it.
+This document preserves the historical empty-catalog cutover plan. [Commands and Tasking](commands-and-tasking.md) defines the current contract and acceptance rules.
 
-The Protocol, Core, SDK, interface, and simulation portions remain current. The former `@the-drunken-coder/atlas-asset-runtime` package was removed on 2026-08-27. Atlas does not currently ship an Asset host implementation.
+All inventories, phases, exit gates, and review steps below describe that original cutover, not current completion requirements. The former `@the-drunken-coder/atlas-asset-runtime` package was removed on 2026-08-27. Issue #455 adds the four production `flight.*` Commands, their purpose-built interface inputs, and the first supported Asset host under `edge/asset`. Core serves that generated catalog unchanged, and Task creation requires a matching current ready manifest. Physical safe-state acceptance remains outstanding.
 
-## Outcome
+## Historical cutover outcome
 
 The work is complete when Atlas has one Protocol-owned but initially empty Command Catalog, one immutable Task resource, explicit lifecycle operations, runtime-scoped delivery, and restart fencing. Core must serve the empty catalog unchanged, and production Task creation must reject every Command until one is added through the documented process.
 
@@ -12,7 +12,7 @@ The cutover removes the old task shape and every old Command. It does not leave 
 
 ## Starting inventory
 
-The current implementation is spread across every major Atlas module:
+The implementation at the start of the cutover was spread across every major Atlas module:
 
 | Module | Current responsibility | Directly affected files found in the starting inventory |
 | --- | --- | ---: |
@@ -270,7 +270,7 @@ Exit gate:
 
 - SDK wire tests cover every new request shape and header
 - packed consumer checks prove the public SDK exports work outside the monorepo
-- Asset execution, local scheduling, and physical safe-state acceptance remain future Asset implementation work
+- Additional Asset implementations and local scheduling variants remain future work. Physical safe-state acceptance for the ArduPilot host also remains outstanding.
 
 ### Phase 5: Command interface
 

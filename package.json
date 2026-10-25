@@ -12,7 +12,8 @@
     "tools/atlas-core-release",
     "plugins/*",
     "surfaces/command-interface",
-    "simulations"
+    "simulations",
+    "edge/asset"
   ],
   "scripts": {
     "postinstall": "npm run build:sdk",

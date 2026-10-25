@@ -1,5 +1,6 @@
 import type { CommandDefinition, EntityResource, JSONValue } from "@the-drunken-coder/atlas-sdk";
 import type { ComponentType } from "react";
+import { GotoForm, LandForm, ReturnToLaunchForm, TakeoffForm } from "./flight-inputs.js";
 
 export type CommandTargeting = "map_point" | "none";
 export type CommandMapPoint = { lat: number; lng: number };
@@ -31,5 +32,11 @@ export type CommandInputRegistration = { targeting: CommandTargeting } & (Direct
 export type CommandInputRegistry = Readonly<Record<string, CommandInputRegistration>>;
 
 // A real Command adds its purpose-built input in the same change that adds the
-// Protocol definition. The initial Protocol catalog and this registry are empty.
-export const COMMAND_INPUT_REGISTRY = {} satisfies CommandInputRegistry;
+// Protocol definition. Flight inputs are dedicated forms, never generic
+// schema-generated ones: choosing a map point alone never dispatches.
+export const COMMAND_INPUT_REGISTRY = {
+  "flight.takeoff": { targeting: "none", Form: TakeoffForm },
+  "flight.goto": { targeting: "map_point", Form: GotoForm },
+  "flight.return_to_launch": { targeting: "none", Form: ReturnToLaunchForm },
+  "flight.land": { targeting: "none", Form: LandForm }
+} satisfies CommandInputRegistry;

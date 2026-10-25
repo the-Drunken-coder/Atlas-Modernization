@@ -52,7 +52,7 @@ _Avoid_: Immediate Task, Control Task, operational Task
 
 The Command Catalog moves into Atlas Protocol beside the schemas it references. There is one canonical catalog.
 
-The initial generated catalog is intentionally empty. Atlas first ships the catalog machinery and the documented process for adding Commands, not a preset collection of Commands. Core therefore serves an empty array until a Command is deliberately added to Protocol.
+The generated catalog starts empty until a Command is deliberately added. The first production Commands are the `flight.*` family; Core serves that Protocol-owned catalog rather than maintaining another definition.
 
 When a Command is added, its definition has this shape:
 
@@ -81,12 +81,13 @@ The catalog does not need wrapper metadata such as a catalog type, name, or desc
 
 ### Authored file layout
 
-Command definitions are authored as one JSON file per operational namespace. The initial empty catalog has this layout:
+Command definitions are authored as one JSON file per operational namespace. The catalog currently contains `flight.json`:
 
 ```text
 packages/protocol/
 ├── commands/
-│   └── README.md
+│   ├── README.md
+│   └── flight.json
 ├── schema/
 │   └── jsonschema/
 │       └── atlas.schema.json
@@ -94,10 +95,11 @@ packages/protocol/
     └── command_catalog.json
 
 docs/atlas-protocol/commands/
-└── README.md
+├── README.md
+└── flight/
 ```
 
-Adding `sensing.scan_area`, for example, creates `commands/sensing.json` and `docs/atlas-protocol/commands/sensing/scan-area.md`. Other namespace files and documentation directories appear only when they contain a real Command.
+Adding another Command, for example `sensing.scan_area`, creates `commands/sensing.json` and `docs/atlas-protocol/commands/sensing/scan-area.md`. Other namespace files and documentation directories appear only when they contain a real Command.
 
 Each namespace file contains a JSON array of Command definitions. Every `command` identifier in the file must use the filename as its namespace prefix. For example, every definition in `mobility.json` begins with `mobility.`.
 
@@ -109,6 +111,7 @@ Input and output schemas remain named definitions in `schema/jsonschema/atlas.sc
 
 The first part of a Command name identifies its operational domain:
 
+- `flight`: aircraft takeoff, go-to, return-to-launch, and land
 - `mobility`: direct movement, such as going to a position or stopping
 - `navigation`: higher-level movement, such as following a route or target
 - `sensing`: observing an environment or area
@@ -123,6 +126,10 @@ The first part of a Command name identifies its operational domain:
 Examples include:
 
 ```text
+flight.takeoff
+flight.goto
+flight.return_to_launch
+flight.land
 mobility.goto
 mobility.stop
 navigation.follow_route
@@ -139,7 +146,7 @@ safety.emergency_stop
 safety.reset_emergency_stop
 ```
 
-These are examples of the namespace language, not Commands included in the initial catalog.
+The four `flight.*` Commands above are in the production catalog. The remaining names illustrate the namespace language and are not production Commands.
 
 The catalog and developer documentation group Commands by this prefix. The operator interface may present related Commands together when that is clearer. In particular, all sensor-related Commands appear in one Sensors group even when their canonical namespaces differ. This is presentation only; there is no second category field carrying the same information.
 
@@ -489,7 +496,7 @@ Registration is a physical-safety barrier, not merely a new network session. Bef
 
 Core does not define the physical actions. It only records whether the current runtime is ready. If the Asset cannot establish or confirm its safe condition, it must not report ready and Core delivers no Tasks.
 
-Atlas currently defines no Asset host implementation or execution-module interface. Those choices remain open until the Asset architecture is designed.
+The ArduPilot Asset Host in `edge/asset` implements this barrier by requiring verified launch elevation and fresh landed, disarmed state before reporting ready after startup. Other Asset implementations must define their own safe condition.
 
 When an Asset process restarts:
 
@@ -585,7 +592,7 @@ When an operator selects an Asset, Atlas shows only the Commands in that Asset's
 4. whether it runs immediately or joins the Task Queue
 5. whether an active Task can be cancelled and whether it reports progress
 
-With the initial empty catalog and manifest, Atlas shows an intentional no-Commands state. It does not fall back to the retired Core catalog or invent controls from Asset data.
+Atlas shows Commands only at the intersection of the Protocol catalog, the current ready runtime manifest, and registered browser inputs. It does not fall back to the retired Core catalog or invent controls from Asset data.
 
 Task state is presented in user language:
 
@@ -614,9 +621,9 @@ packages/sdk/test/
 └── tasking-wire.test.ts
 ```
 
-The JSON corpus defines portable inputs, events, and expected outcomes. Concrete Core tests are authoritative for lifecycle, ordering, runtime fencing, expiry, and transactional persistence. The SDK test verifies wire mapping. Asset execution acceptance belongs to the future Asset implementation. Because the shipped catalog starts empty, the focused consumers use test-only fixture Commands that are excluded from the generated catalog.
+The JSON corpus defines portable inputs, events, and expected outcomes. Concrete Core tests are authoritative for lifecycle, ordering, runtime fencing, expiry, and transactional persistence. The SDK test verifies wire mapping. The ArduPilot Asset Host owns flight execution acceptance; its physical acceptance remains outstanding. Focused consumers still use test-only fixture Commands that are excluded from the generated catalog when they need Commands that are not in production. The production catalog currently contains the `flight.*` family.
 
-The empty-catalog infrastructure is not complete until these behaviors are demonstrated:
+Tasking acceptance requires these behaviors:
 
 1. Task creation validates the Command, current Asset manifest, and input before persisting anything.
 2. Repeating a creation request with the same idempotency key returns one Task and causes at most one physical action.
@@ -627,7 +634,7 @@ The empty-catalog infrastructure is not complete until these behaviors are demon
 7. Completion validates any required output and commits the output and terminal transition atomically.
 8. Competing terminal operations obey first-valid-update-wins and cannot mutate a terminal Task.
 9. A restart fences the old runtime, fails its nonterminal Tasks, and prevents delivery until the new runtime reports ready.
-10. The generated production catalog is empty, Core serves it unchanged, ready runtimes publish empty manifests, and production Task creation rejects every Command.
+10. Core serves the generated production catalog unchanged. The ArduPilot host advertises the four implemented flight Commands. Task creation rejects Commands absent from the catalog or the selected Asset's current ready manifest. An empty manifest exposes no Commands and permits no Task creation.
 
 Command-specific acceptance travels with the change that adds that Command. In particular:
 
@@ -663,7 +670,7 @@ The rebuilt Task module should expose the small lifecycle interface described he
 
 ## Delivery sequence
 
-The executable module-by-module work plan, cutover rules, and validation gates are defined in [Commands and Tasking Implementation Plan](commands-and-tasking-implementation-plan.md).
+The [Commands and Tasking Implementation Plan](commands-and-tasking-implementation-plan.md) preserves the historical empty-catalog cutover. The sequence below describes that cutover; the current catalog and acceptance rules above include the subsequently added flight Commands and ArduPilot host.
 
 1. Add the empty Protocol catalog structure, Command authoring guide, canonical schema definitions, lifecycle requests, outcome enums, examples, conformance fixtures, generated Command Catalog, Task shape, lifecycle states, and manifest shape.
 2. Replace Core Task behavior and have Core serve the Protocol-owned catalog.

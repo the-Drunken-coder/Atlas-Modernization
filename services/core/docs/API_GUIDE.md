@@ -341,7 +341,7 @@ Create one operator tasking attempt by sending the same opaque idempotency key o
 }
 ```
 
-Core generates `task_id`, resolves the Command from the generated Protocol catalog, validates the current ready runtime's manifest and the input schema, and returns the Task in `pending`. Reusing a key with identical tasking data returns the original Task. Reusing it with different data returns a conflict. The generated production catalog is currently empty, so production creation rejects every Command until one is added through the Protocol authoring process.
+Core generates `task_id`, resolves the Command from the generated Protocol catalog, validates the current ready runtime's manifest and the input schema, and returns the Task in `pending`. Reusing a key with identical tasking data returns the original Task. Reusing it with different data returns a conflict. The generated production catalog currently contains the `flight.*` Commands. Creation still rejects a Command that is absent from the catalog or from the Asset's ready runtime manifest.
 
 Asset-only operations send the current process fence in `Atlas-Runtime-ID`. Acknowledge and start use `{}`. Progress uses a value from `0` to `1`:
 

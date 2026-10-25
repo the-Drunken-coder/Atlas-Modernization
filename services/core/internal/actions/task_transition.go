@@ -242,7 +242,11 @@ func cancelTask(task *models.Task, _ protocol.CommandDefinition, manifest protoc
 	if taskTerminal(task.Status) {
 		return false, invalidTaskTransition(task, "cancel")
 	}
-	if task.Status == string(protocol.TaskStatusInProgress) && !manifest.SupportsCancel {
+	// Ordinary operator cancellation honors the manifest advertisement, but
+	// Core-applied supersession always replaces the active Task: replacement
+	// and recovery interruption are Core policy, not operator cancellation.
+	if task.Status == string(protocol.TaskStatusInProgress) && !manifest.SupportsCancel &&
+		cancellation.Code != protocol.TaskCancellationCodeSuperseded {
 		return false, NewValidationError("Command Manifest does not advertise in-progress cancellation")
 	}
 	task.Status = string(protocol.TaskStatusCancelled)

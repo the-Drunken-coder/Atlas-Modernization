@@ -22,7 +22,7 @@ Linting and formatting checks cover each selected package in full, matching the 
 - `services/core/` contains the hosted Go control plane, durable storage integration, and deployment files.
 - `surfaces/core-cli/` contains the published `atlas-core` npm CLI for one durable single-host deployment.
 - `surfaces/command-interface/` contains the operator-facing Cloudflare Pages/Vite application.
-- `edge/asset/` reserves the field Asset role. It contains only a README while the Asset architecture is being designed.
+- `edge/asset/` contains the supported TypeScript/Node.js ArduPilot Asset Host for one quadcopter over MAVLink/SiK.
 - `edge/gateway/` reserves the field Gateway role. It contains only a README while the Gateway architecture is being designed.
 - `packages/protocol/` contains the Atlas schema, generated contracts, validators, examples, and protocol tools.
 - `packages/sdk/` contains the TypeScript/JavaScript Atlas client, sync engine, and CLI.
@@ -35,14 +35,14 @@ Linting and formatting checks cover each selected package in full, matching the 
 
 ## JavaScript workspace
 
-The SDK, Plugin runtime, development reference Plugin, Meshtastic Link, Atlas Core CLI, command interface, and simulations are npm workspaces with one root lockfile. Use Node.js 24 and install their dependencies once from the repository root:
+The SDK, Plugin runtime, development reference Plugin, Meshtastic Link, ArduPilot Asset Host, Atlas Core CLI, command interface, and simulations are npm workspaces with one root lockfile. Use Node.js 24 and install their dependencies once from the repository root:
 
 ```bash
 npm ci
 npm run build
 ```
 
-Simulations use the SDK directly. Meshtastic Link owns radio transport; Core access and Asset policy belong to the separate Gateway and Asset applications. No Asset or Gateway implementation currently exists under `edge/`.
+Simulations use the SDK directly. Meshtastic Link owns radio transport; Core access and Asset policy belong to the separate Gateway and Asset applications. The Gateway remains reserved under `edge/gateway`; the first Asset implementation is documented in `edge/asset/README.md`.
 
 Useful focused commands are `npm run build:sdk`, `npm run build:plugin-runtime`, `npm run build:reference-plugin`, `npm run build:meshtastic-link`, `npm run build:core-cli`, `npm run build:command-interface`, `npm run build:simulations`, `npm run dev:command-interface`, `npm run dev:simulations`, and `npm run dev:simulations-server`.
 

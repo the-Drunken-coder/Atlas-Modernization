@@ -76,8 +76,22 @@ func checkinComponentUpdate(request protocol.EntityCheckInRequest, now time.Time
 		request.HeadingDeg,
 		&nowStr,
 	)
+	// Flat telemetry fields merge into a host-supplied telemetry component
+	// instead of replacing it, so flight fields such as armed, flight_mode,
+	// and launch_elevation_m survive alongside position updates.
 	if len(telemetry) > 0 {
-		components["telemetry"] = telemetry
+		if existing, ok := components["telemetry"].(map[string]interface{}); ok {
+			merged := make(map[string]interface{}, len(existing)+len(telemetry))
+			for key, value := range existing {
+				merged[key] = value
+			}
+			for key, value := range telemetry {
+				merged[key] = value
+			}
+			components["telemetry"] = merged
+		} else {
+			components["telemetry"] = telemetry
+		}
 	}
 
 	components["heartbeat"] = map[string]interface{}{

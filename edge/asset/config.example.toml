@@ -1,0 +1,53 @@
+# Atlas Asset example configuration (credential-free).
+#
+# Copy to asset.toml, fill in your Core credentials and serial device, and
+# start the host with: atlas-asset --config asset.toml
+#
+# The file loads once at startup. Edits while the host runs never change
+# flight behavior. Keep the real file out of version control.
+
+[core]
+# Direct Core connection (no proxy). The browser Command Interface calls the
+# same Core through its SDK.
+url = "http://127.0.0.1:8080"
+api_key = "PASTE-YOUR-OWNER-KEY-HERE"
+
+[asset]
+# An existing stable Asset identity. The host never creates Assets.
+id = "quad-01"
+
+[link]
+# Production SiK radio link over macOS serial. Model-independent: any serial
+# MAVLink connection works, not a particular vendor.
+transport = "serial"
+port = "/dev/tty.usbserial-0001"
+baud = 57600
+# Simulation transport (ArduCopter SITL) instead of serial:
+# transport = "tcp"
+# host = "127.0.0.1"
+# tcp_port = 5760
+
+[vehicle]
+# Expected MAVLink vehicle identity. The host verifies the connected vehicle
+# before accepting flight Tasks; reconnecting a different aircraft fails
+# readiness instead of silently retasking.
+system_id = 1
+component_id = 1
+
+[execution]
+# Core-loss grace period before recovery RTL (seconds).
+core_loss_grace_seconds = 5
+# Telemetry check-in interval (seconds).
+telemetry_interval_seconds = 1
+# Go-to arrival radius and altitude tolerance (meters).
+arrival_radius_m = 1.5
+altitude_tolerance_m = 1.0
+# Takeoff hover settle time after reaching altitude (seconds).
+hover_settle_seconds = 3
+# No-progress and overall task timeouts (seconds).
+progress_timeout_seconds = 30
+task_timeout_seconds = 300
+# Minimum battery to accept flight work (percent).
+min_battery_percent = 20
+# Bounded graceful-shutdown RTL confirmation wait (seconds).
+shutdown_confirm_seconds = 5

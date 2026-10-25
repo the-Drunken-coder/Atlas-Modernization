@@ -198,11 +198,20 @@ assert_status 200 "GET /entities/${ENTITY_ID}" && \
   assert_json ".entity_id == \"${ENTITY_ID}\"" "GET /entities/${ENTITY_ID} body" && \
   pass "GET /entities/${ENTITY_ID} — entity retrieved"
 
-# 6. Production Command Catalog is intentionally empty
+# 6. Production Command Catalog contains the built-in flight Commands
 request GET /command-catalog
 assert_status 200 "GET /command-catalog" && \
-  assert_json 'type == "array" and length == 0' "GET /command-catalog body" && \
-  pass "GET /command-catalog - returns the empty production catalog"
+  assert_json '
+    type == "array" and length == 4 and
+    (map({key: .command, value: .input_schema}) | from_entries) == {
+      "flight.goto": "atlas.flight.GotoRequest",
+      "flight.land": "atlas.tasking.EmptyObject",
+      "flight.return_to_launch": "atlas.tasking.EmptyObject",
+      "flight.takeoff": "atlas.flight.TakeoffRequest"
+    } and
+    all(.[]; .scheduling == "immediate")
+  ' "GET /command-catalog body" && \
+  pass "GET /command-catalog - returns the built-in flight Commands"
 
 # 7. Record the retained Task baseline
 request GET /tasks
@@ -212,7 +221,7 @@ if assert_status 200 "GET /tasks" && assert_json 'type == "array"' "GET /tasks b
   pass "GET /tasks - returns retained Task baseline"
 fi
 
-# 8. Production tasking rejects Commands outside the empty catalog
+# 8. Production tasking rejects Commands outside the catalog
 request POST /tasks \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: integration-${RUN_ID}" \

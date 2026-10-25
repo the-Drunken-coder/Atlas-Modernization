@@ -29,7 +29,9 @@ The fixture Entity and Task IDs remain within the protocol's 50 character limit.
 | Group | Existing behavior executed against PostgreSQL |
 | --- | --- |
 | Feed | Successful writes append ordered committed events. Duplicate Entity creation and a Task rejected for an unregistered Asset do not advance the change clock or leave gaps. |
+| Entity check-in | Flat position fields override duplicate values in the component payload while preserving Asset flight telemetry in the committed Entity. |
 | Task routes | Create, idempotent replay, delivery, acknowledgement, start, progress, completion, failure, cancellation, immediate scheduling, exact JSON number storage, runtime readiness, and runtime stop. |
+| Flight policy | Go-to replacement, recovery interruption, active-takeoff rejection, non-superseding takeoff, and production flight input validation. |
 | Runtime fences | Delivery holds the current runtime fence. Replacement and stop drain nonterminal Tasks in bounded committed batches. Retired and stale runtime IDs cannot become current or mutate Tasks. |
 | Contention | Entity and Object create/delete races, unique alias races, idempotent Task creation, clock-before-resource lock ordering, and concurrent runtime drain cases. |
 
