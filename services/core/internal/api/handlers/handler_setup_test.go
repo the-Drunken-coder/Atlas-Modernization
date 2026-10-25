@@ -9,25 +9,27 @@ import (
 
 	"github.com/rs/zerolog"
 	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
+	"github.com/the-drunken-coder/atlas/services/core/internal/actions"
 	"github.com/the-drunken-coder/atlas/services/core/internal/admin"
 	"github.com/the-drunken-coder/atlas/services/core/internal/config"
 	"github.com/the-drunken-coder/atlas/services/core/internal/database"
+	"github.com/the-drunken-coder/atlas/services/core/internal/feed"
 	"github.com/the-drunken-coder/atlas/services/core/internal/storage"
 )
 
 func TestNewHandlerRequiresConfig(t *testing.T) {
 	assertPanicContains(t, "config is required", func() {
-		NewHandler(nil, nil, zerolog.Nop(), nil)
+		newConfiguredTestHandler(nil, nil, zerolog.Nop(), nil)
 	})
 }
 
 func TestNewHandlerRequiresInitializedDBPool(t *testing.T) {
 	cfg := &config.Config{}
 	assertPanicContains(t, "initialized pool is required", func() {
-		NewHandler(nil, nil, zerolog.Nop(), cfg)
+		newConfiguredTestHandler(nil, nil, zerolog.Nop(), cfg)
 	})
 	assertPanicContains(t, "initialized pool is required", func() {
-		NewHandler(&database.DB{}, nil, zerolog.Nop(), cfg)
+		newConfiguredTestHandler(&database.DB{}, nil, zerolog.Nop(), cfg)
 	})
 }
 func TestAdminAuthPostRejectsUntrustedOrigin(t *testing.T) {
@@ -279,4 +281,22 @@ func TestParseMeminfoBytes(t *testing.T) {
 	if available != 256000 {
 		t.Fatalf("available = %d, want 256000", available)
 	}
+}
+
+func newConfiguredTestHandler(db *database.DB, storageClient *storage.Client, logger zerolog.Logger, cfg *config.Config) *Handler {
+	return newTestHandlerWithFeed(db, storageClient, logger, cfg, nil, nil)
+}
+
+func newTestHandlerWithFeed(db *database.DB, storageClient *storage.Client, logger zerolog.Logger, cfg *config.Config, hub *feed.Hub, adminAuth *admin.Service) *Handler {
+	var tasks *actions.TaskActions
+	if db != nil && db.Pool != nil {
+		var pluginIDs []string
+		if cfg != nil {
+			for _, plugin := range cfg.Plugins {
+				pluginIDs = append(pluginIDs, plugin.ID)
+			}
+		}
+		tasks = actions.NewTaskActionsWithPlugins(db.Pool, pluginIDs)
+	}
+	return NewHandler(db, storageClient, logger, cfg, hub, adminAuth, nil, tasks)
 }

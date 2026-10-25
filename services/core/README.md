@@ -314,7 +314,7 @@ readiness. See [`../../docs/atlas-plugins/README.md`](../../docs/atlas-plugins/R
 
 ### Check-in
 
-`POST /entities/{entity_id}/checkin` reports telemetry and observed state and supports `fields=minimal`. Its optional body is the Protocol `EntityCheckInRequest`; an empty body is `{}`. Malformed JSON returns `INVALID_JSON`, while unknown fields, invalid ranges, and invalid components return `VALIDATION_ERROR` before the Entity write. Task delivery is handled through the runtime registration and delivery routes.
+`POST /entities/{entity_id}/checkin` reports telemetry and observed state and returns `EntityCheckInResponse` containing the updated Entity. Its optional body is the Protocol `EntityCheckInRequest`; an empty body is `{}`. Malformed JSON returns `INVALID_JSON`, while unknown fields, invalid ranges, and invalid components return `VALIDATION_ERROR` before the Entity write. Task delivery is handled through the runtime registration and delivery routes.
 
 ## Pagination and Limits
 

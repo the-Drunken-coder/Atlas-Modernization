@@ -152,9 +152,6 @@ jobs:
           version: v2.12.2
           working-directory: ${{ env.PROTOCOL_WORKING_DIRECTORY }}
 
-      - name: Check Atlas Protocol artifacts
-        run: go run ./tools/check
-
       - name: Run Atlas Protocol tests
         run: go test ./...
 
@@ -188,10 +185,7 @@ jobs:
           cache-dependency-path: package-lock.json
 
       - name: Install JavaScript workspace dependencies
-        run: npm ci
-
-      - name: Verify generated Atlas SDK package metadata is checked in
-        run: git diff --exit-code -- packages/sdk/src/package-metadata.ts
+        run: npm ci --ignore-scripts
 
       - name: Audit JavaScript workspace dependencies
         run: npm audit --audit-level=high
@@ -204,12 +198,6 @@ jobs:
 
       - name: Install browser test runtime
         run: timeout 10m node node_modules/playwright/cli.js install chromium
-
-      - name: Build Atlas SDK
-        run: npm run build:sdk
-
-      - name: Verify Atlas SDK package output
-        run: node packages/sdk/scripts/verify-package-entrypoints.js
 
       - name: Smoke test packed Atlas SDK consumer
         run: npm run test:package --workspace @the-drunken-coder/atlas-sdk

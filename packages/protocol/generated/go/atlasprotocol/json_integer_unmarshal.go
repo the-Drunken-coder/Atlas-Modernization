@@ -208,32 +208,6 @@ func (value *ChangedSinceResponse) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (value *EntityCheckInFullResponse) UnmarshalJSON(data []byte) error {
-	if bytes.Equal(bytes.Trim(data, " \t\r\n"), []byte("null")) {
-		return nil
-	}
-	type alias EntityCheckInFullResponse
-	decoded := alias(*value)
-	if err := atlasProtocolDecodeCanonicalJSON(data, &decoded); err != nil {
-		return err
-	}
-	*value = EntityCheckInFullResponse(decoded)
-	return nil
-}
-
-func (value *EntityCheckInMinimalResponse) UnmarshalJSON(data []byte) error {
-	if bytes.Equal(bytes.Trim(data, " \t\r\n"), []byte("null")) {
-		return nil
-	}
-	type alias EntityCheckInMinimalResponse
-	decoded := alias(*value)
-	if err := atlasProtocolDecodeCanonicalJSON(data, &decoded); err != nil {
-		return err
-	}
-	*value = EntityCheckInMinimalResponse(decoded)
-	return nil
-}
-
 func (value *EntityCheckInRequest) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(bytes.Trim(data, " \t\r\n"), []byte("null")) {
 		return nil
@@ -244,6 +218,19 @@ func (value *EntityCheckInRequest) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	*value = EntityCheckInRequest(decoded)
+	return nil
+}
+
+func (value *EntityCheckInResponse) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(bytes.Trim(data, " \t\r\n"), []byte("null")) {
+		return nil
+	}
+	type alias EntityCheckInResponse
+	decoded := alias(*value)
+	if err := atlasProtocolDecodeCanonicalJSON(data, &decoded); err != nil {
+		return err
+	}
+	*value = EntityCheckInResponse(decoded)
 	return nil
 }
 

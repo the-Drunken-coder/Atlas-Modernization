@@ -209,8 +209,8 @@ func TestTaskLifecycleStateMachine(t *testing.T) {
 func TestTaskActionValidationBeforePersistence(t *testing.T) {
 	ctx := context.Background()
 	tasks := NewTaskActionsWithCatalog(nil, fixtureTaskCatalog(t))
-	if len(tasks.catalog) != 2 || NewTaskActions(nil) == nil {
-		t.Fatal("Task action constructors did not retain their catalogs")
+	if len(tasks.catalog) != 2 {
+		t.Fatal("Task actions did not retain the fixture catalog")
 	}
 	if _, _, err := tasks.Create(ctx, CreateTaskParams{}, ""); err == nil {
 		t.Fatal("Task create accepted an empty idempotency key")

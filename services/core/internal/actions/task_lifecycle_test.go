@@ -287,14 +287,13 @@ func TestRuntimeManifestEventsCarryReasonAndEntityUpdatesDoNot(t *testing.T) {
 	}
 	assertEntityChangeReason(ctx, t, pool, assetID, updatedEntity.Version, "")
 
-	checkin, err := NewEntityCheckinActions(entities).CheckIn(ctx, EntityCheckinParams{
-		EntityID:   assetID,
+	checkin, err := entities.Update(ctx, assetID, UpdateEntityParams{
 		Components: map[string]interface{}{"status": map[string]interface{}{"value": "online"}},
 	})
 	if err != nil {
 		t.Fatalf("Entity check-in: %v", err)
 	}
-	assertEntityChangeReason(ctx, t, pool, assetID, checkin.Entity.Version, "")
+	assertEntityChangeReason(ctx, t, pool, assetID, checkin.Version, "")
 
 	if err := tasks.StopRuntime(ctx, assetID, "runtime-1"); err != nil {
 		t.Fatalf("stop runtime: %v", err)

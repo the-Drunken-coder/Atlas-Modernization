@@ -270,7 +270,7 @@ Patch body:
 
 `components` are deep-merged by key. `subtype` and `alias` can be cleared with `null` or an empty string.
 
-Check-in accepts the optional `fields=minimal` query. Both generated response shapes contain the updated Entity only; Task delivery is separate.
+Check-in returns `EntityCheckInResponse` containing the updated Entity only. Task delivery is separate.
 
 Check-in body is optional. When present, it can include:
 

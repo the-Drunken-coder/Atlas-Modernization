@@ -532,15 +532,7 @@ func TestResponseValidatorsApplyNestedGeometrySemantics(t *testing.T) {
 		"has_more": false, "version": 1,
 	}
 
-	for name, validate := range map[string]func(any) []string{
-		"check-in full":    protocol.ValidateEntityCheckInFullResponse,
-		"check-in minimal": protocol.ValidateEntityCheckInMinimalResponse,
-		"check-in union":   protocol.ValidateEntityCheckInResponse,
-	} {
-		t.Run(name, func(t *testing.T) {
-			assertErrorContains(t, validate(checkIn), "closed")
-		})
-	}
+	assertErrorContains(t, protocol.ValidateEntityCheckInResponse(checkIn), "closed")
 	assertErrorContains(t, protocol.ValidateFullDatasetResponse(fullDataset), "closed")
 	assertErrorContains(t, protocol.ValidateChangedSinceResponse(changedSince), "closed")
 }

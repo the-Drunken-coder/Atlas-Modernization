@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { type CLIIO, isResourceType, parseFilter, RESOURCE_TYPE_VALUES, runCLI } from "../src/cli.js";
+import { type CLIIO, isResourceType, parseFilter, RESOURCE_TYPE_VALUES, runCLI } from "../src/cli-application.js";
 import { FakeCore, task } from "./support/fake-core.js";
 
 describe("Atlas CLI", () => {

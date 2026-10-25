@@ -1,7 +1,5 @@
 import { randomUUID } from "node:crypto";
 import type {
-  EntityCheckInFullResponse,
-  EntityCheckInMinimalResponse,
   EntityCheckInOptions,
   EntityCheckInResponse,
   TaskCreateRequest,
@@ -274,11 +272,7 @@ function trackClientCreates(
     }
     return stop;
   };
-  function checkIn(id: string, options: EntityCheckInOptions<"minimal">): Promise<EntityCheckInMinimalResponse>;
-  function checkIn(id: string, options?: EntityCheckInOptions<"full">): Promise<EntityCheckInFullResponse>;
-  function checkIn(id: string, options?: EntityCheckInOptions): Promise<EntityCheckInResponse>;
   function checkIn(id: string, options?: EntityCheckInOptions): Promise<EntityCheckInResponse> {
-    if (options?.fields === "minimal") return guarded(() => client.entities.checkIn(id, options));
     return guarded(() => client.entities.checkIn(id, options));
   }
   return {

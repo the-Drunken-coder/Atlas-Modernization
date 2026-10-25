@@ -60,14 +60,6 @@ func ValidateEntityCheckInRequest(value any) []string {
 	return validator.ValidateDefinition("EntityCheckInRequest", value)
 }
 
-func ValidateEntityCheckInFullResponse(value any) []string {
-	return validator.ValidateDefinition("EntityCheckInFullResponse", value)
-}
-
-func ValidateEntityCheckInMinimalResponse(value any) []string {
-	return validator.ValidateDefinition("EntityCheckInMinimalResponse", value)
-}
-
 func ValidateEntityCheckInResponse(value any) []string {
 	return validator.ValidateDefinition("EntityCheckInResponse", value)
 }

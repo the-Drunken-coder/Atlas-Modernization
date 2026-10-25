@@ -387,7 +387,7 @@ func TestGoIntegerUnmarshalSourceCoversAuthoredIntegerFields(t *testing.T) {
 	text := string(source)
 	for _, typeName := range []string{
 		"ChangedSinceResponse",
-		"EntityCheckInFullResponse",
+		"EntityCheckInResponse",
 		"EntityResource",
 		"EntityDeleteEvent",
 		"FeedEvent",
