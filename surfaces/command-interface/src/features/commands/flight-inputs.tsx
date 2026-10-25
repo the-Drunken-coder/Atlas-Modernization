@@ -59,11 +59,16 @@ function CommandFormShell({
   );
 }
 
+function decimalAltitude(text: string): number {
+  const trimmed = text.trim();
+  return /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(trimmed) ? Number(trimmed) : Number.NaN;
+}
+
 export function TakeoffForm({ asset, submitting, error, onCancel, onSubmit }: CommandInputFormProps) {
-  const launchElevation = entityLaunchElevation(asset);
+  const launchElevation = telemetryInputFresh(asset) ? entityLaunchElevation(asset) : undefined;
   const [height, setHeight] = useState("");
-  const heightM = Number.parseFloat(height);
-  const heightValid = Number.isFinite(heightM) && heightM > 0;
+  const heightM = decimalAltitude(height);
+  const heightValid = Number.isFinite(heightM) && heightM > 0.3;
   const canSubmit = heightValid && launchElevation !== undefined;
   const targetMsl = canSubmit && launchElevation !== undefined ? launchElevation + heightM : undefined;
 
@@ -77,12 +82,12 @@ export function TakeoffForm({ asset, submitting, error, onCancel, onSubmit }: Co
       submitLabel="Submit takeoff"
       onCancel={onCancel}
       onSubmit={() => {
-        if (targetMsl !== undefined) onSubmit({ altitude_m: targetMsl });
+        if (targetMsl !== undefined && telemetryInputFresh(asset)) onSubmit({ altitude_m: targetMsl });
       }}
     >
       <TextField
         label="Height above launch (m)"
-        hint="Relative to launch; converted to mean sea level before tasking."
+        hint="More than 0.3 m above launch; converted to mean sea level before tasking."
         inputMode="decimal"
         value={height}
         onChange={(event) => setHeight(event.target.value)}
@@ -90,7 +95,7 @@ export function TakeoffForm({ asset, submitting, error, onCancel, onSubmit }: Co
       />
       <p className="command-form__reference">
         {launchElevation === undefined
-          ? "Launch elevation is not verified yet; takeoff stays unavailable until telemetry stabilizes."
+          ? "Launch elevation is not verified yet or telemetry is stale; wait for fresh, verified telemetry."
           : targetMsl === undefined
             ? `Launch elevation ${launchElevation.toFixed(1)} m above mean sea level.`
             : `Target ${targetMsl.toFixed(1)} m above mean sea level (launch ${launchElevation.toFixed(1)} m).`}
@@ -104,7 +109,7 @@ export function GotoForm({ asset, mapPoint, submitting, error, onCancel, onSubmi
   const currentAltitude = entityAltitude(asset);
   const [altitude, setAltitude] = useState(fresh && currentAltitude !== undefined ? String(currentAltitude) : "");
   const [prefilled] = useState(fresh && currentAltitude !== undefined);
-  const altitudeM = Number.parseFloat(altitude);
+  const altitudeM = decimalAltitude(altitude);
   const altitudeValid = Number.isFinite(altitudeM);
   const canSubmit = mapPoint !== undefined && altitudeValid;
 

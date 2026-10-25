@@ -55,6 +55,12 @@ function requiredString(section: Record<string, unknown>, sectionName: string, k
   return value.trim();
 }
 
+function rejectUnknownKeys(section: Record<string, unknown>, name: string, allowedKeys: readonly string[]): void {
+  for (const key of Object.keys(section)) {
+    if (!allowedKeys.includes(key)) fail(`${name ? `[${name}]` : "root"} unknown key ${key}`);
+  }
+}
+
 function optionalNumber(
   section: Record<string, unknown>,
   sectionName: string,
@@ -97,17 +103,40 @@ export function parseAssetConfig(text: string): AssetConfig {
     fail(`not valid TOML: ${cause instanceof Error ? cause.message : String(cause)}`);
   }
   const root = requiredSection(document, "");
+  rejectUnknownKeys(root, "", ["core", "asset", "link", "vehicle", "execution"]);
   const core = requiredSection(root["core"], "core");
   const asset = requiredSection(root["asset"], "asset");
   const link = requiredSection(root["link"], "link");
   const vehicle = requiredSection(root["vehicle"], "vehicle");
   const execution = root["execution"] === undefined ? {} : requiredSection(root["execution"], "execution");
+  rejectUnknownKeys(core, "core", ["url", "api_key"]);
+  rejectUnknownKeys(asset, "asset", ["id"]);
+  rejectUnknownKeys(vehicle, "vehicle", ["system_id", "component_id"]);
+  rejectUnknownKeys(execution, "execution", [
+    "core_loss_grace_seconds",
+    "telemetry_interval_seconds",
+    "arrival_radius_m",
+    "altitude_tolerance_m",
+    "hover_settle_seconds",
+    "progress_timeout_seconds",
+    "task_timeout_seconds",
+    "min_battery_percent",
+    "shutdown_confirm_seconds"
+  ]);
 
   const coreUrl = requiredString(core, "core", "url");
   if (!/^https?:\/\//.test(coreUrl)) {
     fail("[core] url must start with http:// or https://");
   }
   const linkConfig = parseLinkConfig(link);
+  const minBatteryPercent = optionalNumber(
+    execution,
+    "execution",
+    "min_battery_percent",
+    DEFAULTS.minBatteryPercent,
+    0
+  );
+  if (minBatteryPercent > 100) fail("[execution] min_battery_percent must be <= 100");
 
   return {
     coreUrl: coreUrl.replace(/\/+$/, ""),
@@ -147,7 +176,7 @@ export function parseAssetConfig(text: string): AssetConfig {
       5
     ),
     taskTimeoutSeconds: optionalNumber(execution, "execution", "task_timeout_seconds", DEFAULTS.taskTimeoutSeconds, 30),
-    minBatteryPercent: optionalNumber(execution, "execution", "min_battery_percent", DEFAULTS.minBatteryPercent, 0),
+    minBatteryPercent,
     shutdownConfirmSeconds: optionalNumber(
       execution,
       "execution",
@@ -161,6 +190,7 @@ export function parseAssetConfig(text: string): AssetConfig {
 function parseLinkConfig(link: Record<string, unknown>): AssetLinkConfig {
   const transport = link["transport"];
   if (transport === "tcp") {
+    rejectUnknownKeys(link, "link", ["transport", "host", "tcp_port"]);
     return {
       transport: "tcp",
       host: typeof link["host"] === "string" && link["host"].trim() !== "" ? link["host"].trim() : "127.0.0.1",
@@ -168,6 +198,7 @@ function parseLinkConfig(link: Record<string, unknown>): AssetLinkConfig {
     };
   }
   if (transport === undefined || transport === "serial") {
+    rejectUnknownKeys(link, "link", ["transport", "port", "baud"]);
     const port = link["port"];
     if (typeof port !== "string" || port.trim() === "") {
       fail("[link] port is required for serial transport (the SiK radio device, e.g. /dev/tty.usbserial-XXXX)");

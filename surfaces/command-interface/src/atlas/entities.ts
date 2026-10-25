@@ -94,7 +94,7 @@ export function entityTelemetryUpdatedAt(entity: EntityResource): string | undef
   return entity.components.telemetry?.last_update;
 }
 
-/** Telemetry older than this is too stale to prefill command altitude. */
+/** Telemetry older than this is too stale to supply command altitude references. */
 export const TELEMETRY_INPUT_FRESH_SECONDS = 10;
 
 export function telemetryInputFresh(entity: EntityResource, now: number = Date.now()): boolean {
@@ -102,7 +102,8 @@ export function telemetryInputFresh(entity: EntityResource, now: number = Date.n
   if (!updatedAt) return false;
   const timestamp = Date.parse(updatedAt);
   if (!Number.isFinite(timestamp)) return false;
-  return now - timestamp <= TELEMETRY_INPUT_FRESH_SECONDS * 1000;
+  const ageMs = now - timestamp;
+  return ageMs >= 0 && ageMs <= TELEMETRY_INPUT_FRESH_SECONDS * 1000;
 }
 
 export function entityLinkState(entity: EntityResource): LinkState | undefined {

@@ -146,7 +146,7 @@ safety.emergency_stop
 safety.reset_emergency_stop
 ```
 
-These are examples of the namespace language, not Commands included in the initial catalog.
+The four `flight.*` Commands above are in the production catalog. The remaining names illustrate the namespace language and are not production Commands.
 
 The catalog and developer documentation group Commands by this prefix. The operator interface may present related Commands together when that is clearer. In particular, all sensor-related Commands appear in one Sensors group even when their canonical namespaces differ. This is presentation only; there is no second category field carrying the same information.
 
@@ -496,7 +496,7 @@ Registration is a physical-safety barrier, not merely a new network session. Bef
 
 Core does not define the physical actions. It only records whether the current runtime is ready. If the Asset cannot establish or confirm its safe condition, it must not report ready and Core delivers no Tasks.
 
-Atlas currently defines no Asset host implementation or execution-module interface. Those choices remain open until the Asset architecture is designed.
+The ArduPilot Asset Host in `edge/asset` implements this barrier by requiring verified launch elevation and fresh landed, disarmed state before reporting ready after startup. Other Asset implementations must define their own safe condition.
 
 When an Asset process restarts:
 
@@ -621,9 +621,9 @@ packages/sdk/test/
 └── tasking-wire.test.ts
 ```
 
-The JSON corpus defines portable inputs, events, and expected outcomes. Concrete Core tests are authoritative for lifecycle, ordering, runtime fencing, expiry, and transactional persistence. The SDK test verifies wire mapping. Asset execution acceptance belongs to the future Asset implementation. Focused consumers still use test-only fixture Commands that are excluded from the generated catalog when they need Commands that are not in production. The production catalog currently contains the `flight.*` family.
+The JSON corpus defines portable inputs, events, and expected outcomes. Concrete Core tests are authoritative for lifecycle, ordering, runtime fencing, expiry, and transactional persistence. The SDK test verifies wire mapping. The ArduPilot Asset Host owns flight execution acceptance; its physical acceptance remains outstanding. Focused consumers still use test-only fixture Commands that are excluded from the generated catalog when they need Commands that are not in production. The production catalog currently contains the `flight.*` family.
 
-The empty-catalog infrastructure is not complete until these behaviors are demonstrated:
+Tasking acceptance requires these behaviors:
 
 1. Task creation validates the Command, current Asset manifest, and input before persisting anything.
 2. Repeating a creation request with the same idempotency key returns one Task and causes at most one physical action.
@@ -634,7 +634,7 @@ The empty-catalog infrastructure is not complete until these behaviors are demon
 7. Completion validates any required output and commits the output and terminal transition atomically.
 8. Competing terminal operations obey first-valid-update-wins and cannot mutate a terminal Task.
 9. A restart fences the old runtime, fails its nonterminal Tasks, and prevents delivery until the new runtime reports ready.
-10. The generated production catalog is empty, Core serves it unchanged, ready runtimes publish empty manifests, and production Task creation rejects every Command.
+10. Core serves the generated production catalog unchanged. The ArduPilot host advertises the four implemented flight Commands. Task creation rejects Commands absent from the catalog or the selected Asset's current ready manifest. An empty manifest exposes no Commands and permits no Task creation.
 
 Command-specific acceptance travels with the change that adds that Command. In particular:
 
@@ -670,7 +670,7 @@ The rebuilt Task module should expose the small lifecycle interface described he
 
 ## Delivery sequence
 
-The executable module-by-module work plan, cutover rules, and validation gates are defined in [Commands and Tasking Implementation Plan](commands-and-tasking-implementation-plan.md).
+The [Commands and Tasking Implementation Plan](commands-and-tasking-implementation-plan.md) preserves the historical empty-catalog cutover. The sequence below describes that cutover; the current catalog and acceptance rules above include the subsequently added flight Commands and ArduPilot host.
 
 1. Add the empty Protocol catalog structure, Command authoring guide, canonical schema definitions, lifecycle requests, outcome enums, examples, conformance fixtures, generated Command Catalog, Task shape, lifecycle states, and manifest shape.
 2. Replace Core Task behavior and have Core serve the Protocol-owned catalog.

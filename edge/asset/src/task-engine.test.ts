@@ -369,6 +369,42 @@ describe("TaskEngine", () => {
     expect(sent).toHaveLength(1);
   });
 
+  it("requires real liftoff before settling a takeoff within altitude tolerance", async () => {
+    const { engine, reports } = setup();
+    const target = task("task-low", "flight.takeoff", { altitude_m: 560.4 });
+    await engine.ingest([target], guidedSnapshot(), 1_000_000);
+    const update = async (elapsed: number, height: number) => {
+      const nowMs = 1_000_000 + elapsed;
+      await engine.ingest(
+        [{ ...target, status: "in_progress" }],
+        guidedSnapshot({
+          lastHeartbeatMs: nowMs,
+          observation: {
+            latitudeDeg: 37.7749,
+            longitudeDeg: -122.4194,
+            altitudeMslM: 560 + height,
+            relativeAltitudeM: height,
+            groundSpeedMS: 0,
+            headingDeg: 90,
+            observedAtMs: nowMs
+          }
+        }),
+        nowMs
+      );
+    };
+    await update(100, 0);
+    await update(3200, 0);
+    expect(reports.filter((report) => report.type === "complete")).toEqual([]);
+    await update(3300, 0.3);
+    await update(6400, 0.3);
+    expect(reports.filter((report) => report.type === "complete")).toEqual([]);
+    await update(6500, 0.4);
+    await update(9400, 0.4);
+    expect(reports.filter((report) => report.type === "complete")).toEqual([]);
+    await update(9600, 0.4);
+    expect(reports).toContainEqual({ type: "complete", taskId: "task-low" });
+  });
+
   it("completes takeoff after reaching altitude and settling into hover", async () => {
     const { engine, sent, reports } = setup();
     const target = task("task-1", "flight.takeoff", { altitude_m: 570 });

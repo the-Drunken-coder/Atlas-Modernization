@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { entityFixture } from "../../../test/fixtures.js";
@@ -22,6 +22,37 @@ function takeoffProps(asset: ReturnType<typeof entityFixture>, onSubmit: (input:
 }
 
 describe("TakeoffForm", () => {
+  it.each(["", " ", "10m", "10,5", "10 trailing", "Infinity", "NaN", "0x10", "1e2", "9".repeat(400), "0.1", "0.3"])(
+    "withholds invalid takeoff height %s",
+    (height) => {
+      const onSubmit = vi.fn();
+      const asset = entityFixture({
+        components: {
+          telemetry: {
+            launch_elevation_m: 560,
+            last_update: new Date().toISOString()
+          }
+        }
+      });
+      render(<TakeoffForm {...takeoffProps(asset, onSubmit)} />);
+      fireEvent.change(screen.getByLabelText(/Height above launch/), { target: { value: height } });
+      expect(screen.getByRole("button", { name: /Submit takeoff/ })).toBeDisabled();
+      fireEvent.submit(screen.getByRole("form", { name: "Takeoff" }));
+      expect(onSubmit).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([undefined, "2020-01-01T00:00:00Z", "2036-01-01T00:00:00Z"])(
+    "withholds takeoff without a fresh launch reference at %s",
+    (last_update) => {
+      const onSubmit = vi.fn();
+      const asset = entityFixture({ components: { telemetry: { launch_elevation_m: 560, last_update } } });
+      render(<TakeoffForm {...takeoffProps(asset, onSubmit)} />);
+      fireEvent.change(screen.getByLabelText(/Height above launch/), { target: { value: "10" } });
+      expect(screen.getByRole("button", { name: /Submit takeoff/ })).toBeDisabled();
+    }
+  );
+
   it("converts height above launch to mean sea level before submitting", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn();
@@ -33,6 +64,30 @@ describe("TakeoffForm", () => {
     await user.type(screen.getByLabelText(/Height above launch/), "10");
     await user.click(screen.getByRole("button", { name: /Submit takeoff/ }));
     expect(onSubmit).toHaveBeenCalledWith({ altitude_m: 570 });
+  });
+
+  it("rechecks launch telemetry freshness when submitting an idle form", () => {
+    const now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+    try {
+      const onSubmit = vi.fn();
+      const asset = entityFixture({
+        components: {
+          telemetry: {
+            launch_elevation_m: 560,
+            last_update: new Date(now).toISOString()
+          }
+        }
+      });
+      render(<TakeoffForm {...takeoffProps(asset, onSubmit)} />);
+      fireEvent.change(screen.getByLabelText(/Height above launch/), { target: { value: "10" } });
+      expect(screen.getByRole("button", { name: /Submit takeoff/ })).toBeEnabled();
+      clock.mockReturnValue(now + 10_001);
+      fireEvent.submit(screen.getByRole("form", { name: "Takeoff" }));
+      expect(onSubmit).not.toHaveBeenCalled();
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   it("withholds submission without verified launch elevation", () => {
@@ -64,6 +119,31 @@ describe("GotoForm", () => {
       onSubmit: onSubmit as CommandInputFormProps["onSubmit"]
     } satisfies CommandInputFormProps;
   }
+
+  it.each(["", " ", "10m", "10,5", "10 trailing", "Infinity", "NaN", "0x10", "1e2", "9".repeat(400)])(
+    "withholds invalid go-to altitude %s",
+    (altitude) => {
+      const onSubmit = vi.fn();
+      render(<GotoForm {...gotoProps(entityFixture({}), onSubmit)} />);
+      fireEvent.change(screen.getByLabelText(/Altitude/), { target: { value: altitude } });
+      expect(screen.getByRole("button", { name: /Submit go-to/ })).toBeDisabled();
+      fireEvent.submit(screen.getByRole("form", { name: "Go to" }));
+      expect(onSubmit).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([
+    [" -10.5 ", -10.5],
+    ["+.5", 0.5],
+    ["0", 0]
+  ] as const)("accepts signed decimal MSL altitude %s", async (text, altitude_m) => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    render(<GotoForm {...gotoProps(entityFixture({}), onSubmit)} />);
+    fireEvent.change(screen.getByLabelText(/Altitude/), { target: { value: text } });
+    await user.click(screen.getByRole("button", { name: /Submit go-to/ }));
+    expect(onSubmit).toHaveBeenCalledWith({ latitude: 37.7749, longitude: -122.4194, altitude_m });
+  });
 
   it("prefills altitude from fresh telemetry but only submits explicitly", async () => {
     const user = userEvent.setup();

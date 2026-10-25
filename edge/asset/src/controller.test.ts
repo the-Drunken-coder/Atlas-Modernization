@@ -1,6 +1,7 @@
+import { PassThrough } from "node:stream";
 import type { TaskResource } from "@the-drunken-coder/atlas-sdk";
-import { ardupilotmega, common, type MavLinkData } from "node-mavlink";
-import { describe, expect, it, onTestFinished } from "vitest";
+import { ardupilotmega, common, type MavLinkData, minimal } from "node-mavlink";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import type { AssetConfig } from "./config.js";
 import {
   AssetController,
@@ -10,7 +11,7 @@ import {
   shouldRequestCoreLossRecovery
 } from "./controller.js";
 import { type CoreGateway, type FlightTelemetry } from "./core-client.js";
-import type { MavLink } from "./mavlink-link.js";
+import { MavLink, type MessageHandler } from "./mavlink-link.js";
 import { TaskEngine } from "./task-engine.js";
 import { VehicleTracker } from "./vehicle.js";
 
@@ -107,6 +108,111 @@ describe("recovery decisions", () => {
 });
 
 describe("AssetController Core-loss recovery", () => {
+  it.each(["pre-heartbeat positions", "stale disarmed heartbeat", "unknown heading"])(
+    "starts only after trusted landed state with %s",
+    async (scenario) => {
+      let now = 1_000_000;
+      let stage = 0;
+      let readyCalls = 0;
+      let handler: MessageHandler | undefined;
+      const tracker = new VehicleTracker();
+      const link = new MavLink(new PassThrough(), 255, 190, "startup test");
+      vi.spyOn(link, "send").mockResolvedValue();
+      vi.spyOn(link, "onMessage").mockImplementation((listener) => {
+        handler = listener;
+        return () => {};
+      });
+      const feed = (item: MavLinkData) => {
+        if (handler === undefined) throw new Error("MAVLink handler missing");
+        handler({ sysid: 1, compid: 1, msgid: 0, message: item });
+      };
+      const heartbeat = (armed: boolean) => {
+        const item = new minimal.Heartbeat();
+        item.type = 2;
+        item.autopilot = 3;
+        item.baseMode = armed ? minimal.MavModeFlag.SAFETY_ARMED : minimal.MavModeFlag.GUIDED_ENABLED;
+        item.customMode = 4;
+        feed(item);
+      };
+      const position = (altitude: number, heading = 9000) => {
+        const item = new common.GlobalPositionInt();
+        item.lat = 377_749_000;
+        item.lon = -1_224_194_000;
+        item.alt = altitude * 1000;
+        item.relativeAlt = 0;
+        item.vx = 0;
+        item.vy = 0;
+        item.vz = 0;
+        item.hdg = heading;
+        feed(item);
+      };
+      const core: CoreGateway = {
+        begin: async () => {
+          const param = new common.ParamValue();
+          param.paramId = "FS_GCS_ENABLE";
+          param.paramValue = 1;
+          feed(param);
+          feed(Object.assign(new common.SysStatus(), { batteryRemaining: 95 }));
+          if (scenario !== "pre-heartbeat positions") heartbeat(false);
+          for (let i = 0; i < 3; i++) position(600);
+          if (scenario === "stale disarmed heartbeat") now += 4000;
+          if (scenario === "unknown heading") {
+            position(600, 65535);
+            expect(tracker.getSnapshot().observation?.headingDeg).toBeUndefined();
+            expect(flightTelemetryForCheckin(tracker.getSnapshot(), now)?.position).not.toHaveProperty("headingDeg");
+            position(600, 0);
+            expect(flightTelemetryForCheckin(tracker.getSnapshot(), now)?.position?.headingDeg).toBe(0);
+          }
+        },
+        ready: async () => {
+          readyCalls++;
+        },
+        fetchTasks: async () => [],
+        getTask: async () => {
+          throw new Error("unexpected Task read");
+        },
+        reportStart: async () => {},
+        reportProgress: async () => {},
+        reportComplete: async () => {},
+        reportFail: async () => {},
+        checkin: async () => {}
+      };
+      const engine = new TaskEngine(link, core, config, () => ({ snapshot: tracker.getSnapshot(), nowMs: now }));
+      const controller = new AssetController(config, {
+        openLink: async () => link,
+        core,
+        engine,
+        tracker,
+        now: () => now,
+        sleep: async (ms) => {
+          now += ms;
+          stage++;
+          if (scenario === "unknown heading" || stage === 3) {
+            await controller.shutdown();
+          } else if (stage === 1) {
+            expect(readyCalls).toBe(0);
+            heartbeat(true);
+            position(560);
+          } else {
+            expect(readyCalls).toBe(0);
+            heartbeat(false);
+            for (let i = 0; i < 3; i++) position(560);
+          }
+        }
+      });
+      try {
+        await controller.start();
+        expect(readyCalls).toBe(1);
+        expect(tracker.getSnapshot().launchElevationM).toBe(scenario === "pre-heartbeat positions" ? 560 : 600);
+      } finally {
+        heartbeat(false);
+        position(560);
+        await controller.shutdown();
+        vi.restoreAllMocks();
+      }
+    }
+  );
+
   it("surfaces a retained link failure during startup and closes the link once", async () => {
     const linkFailure = new Error("MAVLink TCP stream failed: connection reset");
     let linkStatus: ReturnType<MavLink["status"]> = { state: "open" };

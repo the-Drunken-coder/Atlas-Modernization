@@ -9,7 +9,7 @@ peripherals, not Atlas compute nodes.
 ## Run
 
 ```sh
-cp config.example.toml asset.toml
+cp edge/asset/config.example.toml asset.toml
 # edit asset.toml: Core URL/key, Asset id, serial port, vehicle identity
 npm run build --workspace @the-drunken-coder/atlas-asset
 node edge/asset/dist/cli.js --config asset.toml

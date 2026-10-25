@@ -583,6 +583,7 @@ export class TaskEngine {
       const arrived =
         snapshot.guided &&
         snapshot.armed &&
+        observation.relativeAltitudeM > 0.3 &&
         Math.abs(target - observation.altitudeMslM) <= this.config.altitudeToleranceM &&
         observation.groundSpeedMS <= 0.5;
       if (!arrived) {

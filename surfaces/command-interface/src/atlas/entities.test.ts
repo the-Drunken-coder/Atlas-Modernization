@@ -66,6 +66,12 @@ describe("entity accessors", () => {
       telemetryInputFresh(entity({ components: { telemetry: { last_update: "2026-06-20T00:09:00Z" } } }), now)
     ).toBe(false);
     expect(telemetryInputFresh(entity({ components: {} }), now)).toBe(false);
+    for (const ageMs of [-1, 0, 10_000, 10_001]) {
+      const last_update = new Date(now - ageMs).toISOString();
+      expect(telemetryInputFresh(entity({ components: { telemetry: { last_update } } }), now)).toBe(
+        ageMs >= 0 && ageMs <= 10_000
+      );
+    }
   });
 
   it("grades heartbeat freshness against thresholds", () => {

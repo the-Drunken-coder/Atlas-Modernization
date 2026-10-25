@@ -164,7 +164,3 @@ export function paramReadCommand(targetSystem: number, targetComponent: number, 
   message.paramIndex = -1;
   return message;
 }
-
-export function isCommonMessage(name: string): boolean {
-  return (common as unknown as Record<string, unknown>)[name] !== undefined;
-}

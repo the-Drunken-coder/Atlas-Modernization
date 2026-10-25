@@ -81,9 +81,11 @@ export function flightTelemetryForCheckin(snapshot: VehicleSnapshot, nowMs: numb
       latitude: snapshot.observation.latitudeDeg,
       longitude: snapshot.observation.longitudeDeg,
       altitudeMslM: snapshot.observation.altitudeMslM,
-      speedMS: snapshot.observation.groundSpeedMS,
-      headingDeg: snapshot.observation.headingDeg
+      speedMS: snapshot.observation.groundSpeedMS
     };
+    if (snapshot.observation.headingDeg !== undefined) {
+      telemetry.position.headingDeg = snapshot.observation.headingDeg;
+    }
   }
   return telemetry;
 }
@@ -240,14 +242,13 @@ export class AssetController {
         const position = message.message as GlobalPositionMessage;
         const speedMS = Math.hypot(position.vx / 100, position.vy / 100, position.vz / 100);
         // MAVLink uses 65535 for unknown heading; Atlas heading_deg requires [0, 360).
-        const headingDeg = position.hdg === 65535 ? 0 : (position.hdg / 100) % 360;
         tracker.observePosition({
           latitudeDeg: position.lat / 1e7,
           longitudeDeg: position.lon / 1e7,
           altitudeMslM: position.alt / 1000,
           relativeAltitudeM: position.relativeAlt / 1000,
           groundSpeedMS: speedMS,
-          headingDeg,
+          ...(position.hdg === 65535 ? {} : { headingDeg: (position.hdg / 100) % 360 }),
           observedAtMs: now
         });
         break;
@@ -305,6 +306,7 @@ export class AssetController {
       const relativeAltitudeM = snapshot.observation?.relativeAltitudeM;
       if (
         !this.initiallyLandedAndDisarmed &&
+        hasFreshControlTelemetry(snapshot, this.now()) &&
         !snapshot.armed &&
         relativeAltitudeM !== undefined &&
         Math.abs(relativeAltitudeM) <= 0.5

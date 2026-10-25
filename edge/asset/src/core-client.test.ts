@@ -26,6 +26,28 @@ function clientWith(fetchImpl: typeof fetch): AtlasClient {
 }
 
 describe("CoreAttachment", () => {
+  it("omits unknown heading from the actual check-in request", async () => {
+    let requestBody: unknown;
+    const core = new CoreAttachment(
+      config,
+      clientWith(async (_url, init) => {
+        requestBody = JSON.parse(String(init?.body));
+        return Response.json({
+          entity: {
+            entity_id: config.assetId,
+            entity_type: "asset",
+            subtype: null,
+            alias: null,
+            components: {},
+            metadata: { created_at: "2026-09-19T12:00:00Z", updated_at: "2026-09-19T12:00:00Z", version: 1 }
+          }
+        });
+      })
+    );
+    await core.checkin({ position: { latitude: 42, longitude: -71, altitudeMslM: 152, speedMS: 0 } });
+    expect(requestBody).toEqual({ latitude: 42, longitude: -71, altitude_m: 152, speed_m_s: 0 });
+  });
+
   it("reports movement once through flat telemetry and forwards flight state and battery components", async () => {
     let requestBody: unknown;
     const fetchImpl: typeof fetch = async (_url, init) => {

@@ -26,6 +26,31 @@ core_loss_grace_seconds = 5
 `;
 
 describe("parseAssetConfig", () => {
+  it.each([
+    ["misspelled = 1\n", "root", "misspelled"],
+    ['[core]\nurll = "http://x"', "core", "urll"],
+    ['[asset]\nidd = "quad"', "asset", "idd"],
+    ["[vehicle]\nsystemm_id = 1", "vehicle", "systemm_id"],
+    ["[execution]\nmin_batery_percent = 80", "execution", "min_batery_percent"],
+    ["[link]\ntcp_port = 5760", "link", "tcp_port"]
+  ])("rejects unknown configuration key %s", (addition, section, key) => {
+    const text = section === "root" ? addition + VALID : VALID.replace(`[${section}]`, addition);
+    expect(() => parseAssetConfig(text)).toThrowError(new RegExp(`${section}.*${key}`));
+  });
+
+  it("rejects serial-only options on a TCP link", () => {
+    const text = VALID.replace('transport = "serial"', 'transport = "tcp"');
+    expect(() => parseAssetConfig(text)).toThrowError(/link.*port/);
+  });
+
+  it("bounds battery percentage without rejecting fractional thresholds", () => {
+    expect(() => parseAssetConfig(`${VALID}\nmin_battery_percent = 101`)).toThrowError(/min_battery_percent/);
+    expect(() => parseAssetConfig(`${VALID}\nmin_battery_percent = -1`)).toThrowError(/min_battery_percent/);
+    for (const value of [0, 20.5, 100]) {
+      expect(parseAssetConfig(`${VALID}\nmin_battery_percent = ${value}`).minBatteryPercent).toBe(value);
+    }
+  });
+
   it("parses a complete serial configuration", () => {
     const config = parseAssetConfig(VALID);
     expect(config.coreUrl).toBe("http://127.0.0.1:8080");

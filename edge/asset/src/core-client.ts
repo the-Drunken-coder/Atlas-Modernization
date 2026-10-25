@@ -52,7 +52,7 @@ export type FlightTelemetry = {
     longitude: number;
     altitudeMslM: number;
     speedMS: number;
-    headingDeg: number;
+    headingDeg?: number;
   };
   armed?: boolean;
   flightMode?: string;
@@ -126,7 +126,7 @@ export class CoreAttachment {
       flat.longitude = telemetry.position.longitude;
       flat.altitude_m = telemetry.position.altitudeMslM;
       flat.speed_m_s = telemetry.position.speedMS;
-      flat.heading_deg = telemetry.position.headingDeg;
+      if (telemetry.position.headingDeg !== undefined) flat.heading_deg = telemetry.position.headingDeg;
     }
     // Flat fields feed both movement history and Core's telemetry component.
     // Only Asset-specific flight state belongs in the explicit component.

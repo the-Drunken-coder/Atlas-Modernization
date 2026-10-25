@@ -35,7 +35,7 @@ export type VehicleObservation = {
   altitudeMslM: number;
   relativeAltitudeM: number;
   groundSpeedMS: number;
-  headingDeg: number;
+  headingDeg?: number;
   batteryRemainingPercent?: number;
   observedAtMs: number;
 };
@@ -65,13 +65,19 @@ export function emptySnapshot(): VehicleSnapshot {
 const HEARTBEAT_FRESHNESS_MS = 3_000;
 const POSITION_FRESHNESS_MS = 10_000;
 
+function hasFreshHeartbeat(snapshot: VehicleSnapshot, nowMs: number): boolean {
+  if (snapshot.lastHeartbeatMs === undefined) return false;
+  const ageMs = nowMs - snapshot.lastHeartbeatMs;
+  return ageMs >= 0 && ageMs <= HEARTBEAT_FRESHNESS_MS;
+}
+
 /** Both control streams must be known and recent enough for flight commands. */
 export function hasFreshControlTelemetry(snapshot: VehicleSnapshot, nowMs: number): boolean {
   const positionObservedAtMs = snapshot.observation?.observedAtMs;
   return (
-    snapshot.lastHeartbeatMs !== undefined &&
+    hasFreshHeartbeat(snapshot, nowMs) &&
     positionObservedAtMs !== undefined &&
-    nowMs - snapshot.lastHeartbeatMs <= HEARTBEAT_FRESHNESS_MS &&
+    nowMs - positionObservedAtMs >= 0 &&
     nowMs - positionObservedAtMs <= POSITION_FRESHNESS_MS
   );
 }
@@ -103,6 +109,9 @@ export class VehicleTracker {
   }
 
   observeHeartbeat(heartbeat: HeartbeatObservation): void {
+    if (!hasFreshHeartbeat(this.snapshot, heartbeat.receivedAtMs) || isArmedBaseMode(heartbeat.baseMode)) {
+      this.launchSamples = [];
+    }
     const mode = copterModeName(heartbeat.customMode);
     this.snapshot = {
       ...this.snapshot,
@@ -118,10 +127,10 @@ export class VehicleTracker {
       guided: isGuidedMode(heartbeat.customMode),
       lastHeartbeatMs: heartbeat.receivedAtMs
     };
-    if (this.snapshot.armed) this.launchSamples = [];
   }
 
   observePosition(observation: VehicleObservation): void {
+    if (!hasFreshControlTelemetry(this.snapshot, observation.observedAtMs)) this.launchSamples = [];
     this.snapshot = { ...this.snapshot, observation };
     if (observation.batteryRemainingPercent !== undefined) {
       this.snapshot = { ...this.snapshot, batteryRemainingPercent: observation.batteryRemainingPercent };
@@ -153,7 +162,11 @@ export class VehicleTracker {
   }
 
   private maybeVerifyLaunchElevation(observation: VehicleObservation): void {
-    if (this.snapshot.launchElevationVerified || this.snapshot.armed) return;
+    if (this.snapshot.launchElevationVerified) return;
+    if (this.snapshot.armed || !hasFreshHeartbeat(this.snapshot, observation.observedAtMs)) {
+      this.launchSamples = [];
+      return;
+    }
     // Only trust samples that look landed: near-zero relative altitude.
     if (Math.abs(observation.relativeAltitudeM) > 0.5) {
       this.launchSamples = [];
