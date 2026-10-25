@@ -262,7 +262,9 @@ describe("AssetController Core-loss recovery", () => {
   it.each(["ack", "mode", "reconnect", "LOITER", "SMART_RTL", "BRAKE"] as const)(
     "reconciles Core-loss RTL after %s without resuming interrupted work",
     async (confirmation) => {
-      let now = 1_000_000;
+      // Advance telemetry and controller sleeps together, independent of host scheduling.
+      vi.useFakeTimers();
+      vi.setSystemTime(1_000_000);
       const sent: MavLinkData[] = [];
       const failed: { taskId: string; code: string; message: string }[] = [];
       const started: string[] = [];
@@ -326,7 +328,7 @@ describe("AssetController Core-loss recovery", () => {
           reportFail: (taskId, code, message) => core.reportFail(taskId, code, message)
         },
         config,
-        () => ({ snapshot: tracker.getSnapshot(), nowMs: now })
+        () => ({ snapshot: tracker.getSnapshot(), nowMs: Date.now() })
       );
       const logs: string[] = [];
       const controller = new AssetController(config, {
@@ -336,26 +338,26 @@ describe("AssetController Core-loss recovery", () => {
         tracker,
         log: (_level, message) => {
           logs.push(message);
-        },
-        sleep: async (ms) => {
-          now += ms;
-          // Pace the loop in real time so fed vehicle state stays fresh.
-          await new Promise((resolve) => setTimeout(resolve, 1));
-        },
-        now: () => now
+        }
       });
 
       const run = controller.start();
       onTestFinished(async () => {
-        await controller.shutdown();
-        await run;
+        try {
+          const shutdown = controller.shutdown();
+          await vi.advanceTimersByTimeAsync(config.shutdownConfirmSeconds * 1000);
+          await shutdown;
+          await run;
+        } finally {
+          vi.useRealTimers();
+        }
       });
       // Wait for the link handler before feeding vehicle state.
       {
         const deadline = Date.now() + 15_000;
         while (handler === undefined) {
           if (Date.now() > deadline) throw new Error("timed out waiting for link open");
-          await new Promise((resolve) => setTimeout(resolve, 5));
+          await vi.advanceTimersByTimeAsync(100);
         }
       }
       const feed = (name: string, fields: Record<string, number | string>) => {
@@ -394,7 +396,7 @@ describe("AssetController Core-loss recovery", () => {
           // Feed fresh vehicle state so readiness and preconditions hold.
           heartbeat(armed, mode);
           position(560 + relativeAltitudeM, relativeAltitudeM);
-          await new Promise((resolve) => setTimeout(resolve, 5));
+          await vi.advanceTimersByTimeAsync(100);
         }
       }
 
@@ -411,8 +413,8 @@ describe("AssetController Core-loss recovery", () => {
         command: "flight.takeoff",
         input: { altitude_m: 570 },
         status: "pending",
-        created_at: new Date(now).toISOString(),
-        updated_at: new Date(now).toISOString()
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
       } satisfies TaskResource;
       tasks.push(takeoff);
       await waitFor(() => started.includes("task-takeoff"), "takeoff start", true);
@@ -431,7 +433,7 @@ describe("AssetController Core-loss recovery", () => {
           if (Date.now() > deadline) throw new Error("timed out waiting for Core-loss RTL");
           heartbeat(true, 4);
           position(560, 8);
-          await new Promise((resolve) => setTimeout(resolve, 5));
+          await vi.advanceTimersByTimeAsync(100);
         }
       })();
       await rtlWait;
@@ -454,8 +456,8 @@ describe("AssetController Core-loss recovery", () => {
       if (confirmation === "reconnect") {
         for (const stale of [false, true]) {
           const beforeUncertainMode = rtlCount();
-          const uncertainAt = now;
-          while (now < uncertainAt + 4000) {
+          const uncertainAt = Date.now();
+          while (Date.now() < uncertainAt + 4000) {
             tracker.observeHeartbeat({
               systemId: 1,
               componentId: 1,
@@ -463,10 +465,10 @@ describe("AssetController Core-loss recovery", () => {
               autopilot: 3,
               baseMode: 128,
               customMode: stale ? ardupilotmega.CopterMode.LOITER : 999,
-              receivedAtMs: stale ? now - 4000 : now
+              receivedAtMs: stale ? Date.now() - 4000 : Date.now()
             });
             position(568, 8);
-            await new Promise((resolve) => setTimeout(resolve, 1));
+            await vi.advanceTimersByTimeAsync(100);
           }
           expect(rtlCount()).toBe(beforeUncertainMode);
           await waitFor(() => rtlCount() > beforeUncertainMode, "RTL retry after uncertain mode telemetry", true, 4, 8);
@@ -481,21 +483,21 @@ describe("AssetController Core-loss recovery", () => {
         heartbeat(true, mode);
         position(568, 8);
         const beforeTakeover = flightCommands();
-        const takeoverAt = now;
-        await waitFor(() => now >= takeoverAt + 6000, "takeover without RTL acknowledgement", true, mode, 8);
+        const takeoverAt = Date.now();
+        await waitFor(() => Date.now() >= takeoverAt + 6000, "takeover without RTL acknowledgement", true, mode, 8);
         expect(flightCommands()).toEqual(beforeTakeover);
 
         tasks.splice(0, tasks.length, {
           ...takeoff,
           status: "in_progress",
-          acknowledged_at: new Date(now).toISOString(),
-          started_at: new Date(now).toISOString()
+          acknowledged_at: new Date().toISOString(),
+          started_at: new Date().toISOString()
         });
         coreDown = false;
         await waitFor(() => !controller.isCoreDown(), "Core reconnect in manual mode", true, mode, 8);
         tasks.push({ ...takeoff, task_id: "task-after-takeover" });
-        const reconnectedAt = now;
-        await waitFor(() => now >= reconnectedAt + 3000, "new task handling in manual mode", true, mode, 8);
+        const reconnectedAt = Date.now();
+        await waitFor(() => Date.now() >= reconnectedAt + 3000, "new task handling in manual mode", true, mode, 8);
         expect(failed).toContainEqual({
           taskId: "task-after-takeover",
           code: "precondition_failed",
@@ -507,8 +509,8 @@ describe("AssetController Core-loss recovery", () => {
         // Fresh Guided control holds the pilot's position, both on the ground
         // and in flight. It must never revive the old Core-loss RTL request.
         const armed = confirmation !== "LOITER";
-        const guidedAt = now;
-        await waitFor(() => now >= guidedAt + 3000, "Guided return after takeover", armed, 4, armed ? 8 : 0);
+        const guidedAt = Date.now();
+        await waitFor(() => Date.now() >= guidedAt + 3000, "Guided return after takeover", armed, 4, armed ? 8 : 0);
         const afterReturn = flightCommands().slice(beforeTakeover.length);
         expect(afterReturn).toHaveLength(1);
         expect(afterReturn[0]).toBeInstanceOf(common.SetPositionTargetGlobalInt);
@@ -523,8 +525,14 @@ describe("AssetController Core-loss recovery", () => {
         heartbeat(true, 6);
       }
       if (confirmation !== "reconnect") {
-        const confirmedAt = now;
-        await waitFor(() => now >= confirmedAt + 6000, "confirmed recovery", true, confirmation === "mode" ? 6 : 4, 8);
+        const confirmedAt = Date.now();
+        await waitFor(
+          () => Date.now() >= confirmedAt + 6000,
+          "confirmed recovery",
+          true,
+          confirmation === "mode" ? 6 : 4,
+          8
+        );
         expect(rtlCount()).toBe(confirmedCount);
       }
 
@@ -540,15 +548,15 @@ describe("AssetController Core-loss recovery", () => {
         command: "flight.takeoff",
         input: { altitude_m: 570 },
         status: "in_progress",
-        created_at: new Date(now).toISOString(),
-        updated_at: new Date(now).toISOString()
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
       } as unknown as TaskResource);
       const refreshDeadline = Date.now() + 15_000;
       while (activeRefreshAttempts === refreshAttemptsBeforeRecovery || !controller.isCoreDown()) {
         if (Date.now() > refreshDeadline) throw new Error("timed out waiting for failed active Task refresh");
         heartbeat(true, 4);
         position(560, 8);
-        await new Promise((resolve) => setTimeout(resolve, 5));
+        await vi.advanceTimersByTimeAsync(100);
       }
       expect(controller.isCoreDown()).toBe(true);
       expect(failed).toEqual([]);
@@ -565,7 +573,8 @@ describe("AssetController Core-loss recovery", () => {
       // No new flight commands after reconnect: heartbeats continue, but the
       // interrupted takeoff is never dispatched again.
       const commandsAfterReconnect = rtlCount();
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      const reconnectedAt = Date.now();
+      await waitFor(() => Date.now() >= reconnectedAt + 6000, "idle after Core reconnects", true, 4, 8);
       expect(rtlCount()).toBe(commandsAfterReconnect);
 
       // A just-dispatched Land must survive shutdown even before its native
@@ -579,12 +588,13 @@ describe("AssetController Core-loss recovery", () => {
         command: "flight.land",
         input: {},
         status: "pending",
-        created_at: new Date(now).toISOString(),
-        updated_at: new Date(now).toISOString()
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
       } as unknown as TaskResource);
       await waitFor(() => engine.activeCommand() === "flight.land", "landing dispatch", true, 4, 8);
       const beforeShutdown = rtlCount();
       await controller.shutdown();
+      await vi.advanceTimersByTimeAsync(100);
       await run;
       expect(rtlCount()).toBe(beforeShutdown);
       expect(logs.some((entry) => entry.includes("Core-loss"))).toBe(true);
