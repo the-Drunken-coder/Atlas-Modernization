@@ -27,6 +27,9 @@ while running. Keep the credential-bearing file out of version control.
   `FS_GCS_ENABLE`, battery, GPS, verified launch elevation) before runtime
   readiness. Failures explain what is wrong; the host never changes aircraft
   configuration.
+- New takeoff and go-to Tasks require a known battery reading at or above
+  `min_battery_percent`, checked again after Core authorizes the start.
+  Low or unknown battery does not block RTL or Land recovery.
 - Four production Commands (`flight.takeoff`, `flight.goto`,
   `flight.return_to_launch`, `flight.land`), all immediate scheduling. Go-to
   replaces go-to; RTL/land interrupt takeoff/go-to via Core supersession.
@@ -41,7 +44,9 @@ while running. Keep the credential-bearing file out of version control.
 - Core loss stops new starts with a configurable 5s grace period. Recovery
   reconnects and reconciles before continuing; after expiry it requests RTL
   only under Atlas control. Reconnection never resumes the interrupted action,
-  and an ongoing landing is preserved. Host/SiK loss relies on the verified
+  and an ongoing landing is preserved. RTL retries at most once per second
+  until an accepted acknowledgement or observed RTL/Land mode confirms it,
+  even if Core reconnects first. Host/SiK loss relies on the verified
   onboard heartbeat-loss failsafe (the host sends GCS heartbeats).
 - Every restart uses a fresh runtime identity under normal Core fencing.
   Telemetry resumes, but flight readiness waits for landed + disarmed state.
@@ -49,6 +54,9 @@ while running. Keep the credential-bearing file out of version control.
   mode confirmation; ongoing RTL, landing, or manual control is preserved.
   The runtime registration is left for the next process, whose fresh identity
   drains stale work.
+- Recovery Tasks track fresh aircraft movement and expected native mode
+  transitions for stall detection. Both stall and overall Task timeouts remain
+  active, and a timeout leaves the autopilot recovery running.
 
 ## Validation boundary
 

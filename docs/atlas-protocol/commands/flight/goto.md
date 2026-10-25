@@ -18,6 +18,8 @@ position as the airborne idle state.
 ## Preconditions (enforced by the host at execution)
 
 - Aircraft in Guided mode with usable observations.
+- Battery telemetry is known and meets the configured minimum, including
+  after Core authorizes the start.
 - No takeoff active.
 
 ## Outcomes

@@ -153,6 +153,8 @@ describe("VehicleTracker", () => {
     expect(tracker.getSnapshot().batteryRemainingPercent).toBeUndefined();
     tracker.observeSysStatus(55);
     expect(tracker.getSnapshot().batteryRemainingPercent).toBe(55);
+    tracker.observeSysStatus(undefined);
+    expect(tracker.getSnapshot().batteryRemainingPercent).toBeUndefined();
   });
 
   it("requires both known, fresh control telemetry streams", () => {

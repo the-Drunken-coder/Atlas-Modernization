@@ -14,13 +14,15 @@ Land at the current location and disarm.
 
 ## Preconditions (enforced by the host at execution)
 
-- Aircraft airborne.
+- Aircraft armed with relative altitude outside the 0.3 m touchdown
+  tolerance. Low or unknown battery does not block recovery.
 
 ## Outcomes
 
 - `completed`: landed at the current location and disarmed.
 - `failed`: timeout or no progress; the autopilot recovery action is left
-  running.
+  running. Fresh movement or expected native mode transitions count as
+  progress.
 - No ordinary cancellation after starting (`supports_cancel` is false).
 
 ## Durable effects

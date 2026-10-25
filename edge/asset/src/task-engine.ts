@@ -7,6 +7,7 @@ import {
   takeoffCommand
 } from "./commands.js";
 import type { AssetConfig } from "./config.js";
+import { checkBatteryReadiness } from "./readiness.js";
 import { hasFreshControlTelemetry, type VehicleSnapshot } from "./vehicle.js";
 
 export type FlightCommand = "flight.takeoff" | "flight.goto" | "flight.return_to_launch" | "flight.land";
@@ -50,6 +51,7 @@ type ActiveExecution = {
   task: AuthoritativeTask;
   startedAtMs: number;
   lastProgressAtMs: number;
+  lastProgressSnapshot: VehicleSnapshot;
   startRemainingM?: number;
   bestRemainingM: number;
   settleSinceMs?: number;
@@ -345,6 +347,7 @@ export class TaskEngine {
       task: candidate,
       startedAtMs: current.nowMs,
       lastProgressAtMs: current.nowMs,
+      lastProgressSnapshot: current.snapshot,
       bestRemainingM: remaining ?? Number.POSITIVE_INFINITY,
       expectedModes: expectedModesFor(candidate.command as FlightCommand)
     };
@@ -382,6 +385,15 @@ export class TaskEngine {
     }
     if (!hasFreshControlTelemetry(snapshot, nowMs)) {
       problems.push("Requires fresh telemetry; heartbeat or position observations are stale.");
+    }
+    if (task.command === "flight.takeoff" || task.command === "flight.goto") {
+      const batteryFailure = checkBatteryReadiness(snapshot, this.config);
+      if (batteryFailure !== undefined) problems.push(batteryFailure.message);
+    }
+    if (task.command === "flight.return_to_launch" || task.command === "flight.land") {
+      if (!snapshot.armed || Math.abs(snapshot.observation?.relativeAltitudeM ?? 0) <= 0.3) {
+        problems.push("Recovery requires an airborne aircraft.");
+      }
     }
     if (task.command === "flight.takeoff") {
       if (!snapshot.armed) problems.push("Takeoff requires an already-armed aircraft; Atlas never arms.");
@@ -474,9 +486,13 @@ export class TaskEngine {
       return;
     }
     const remaining = this.remaining(active.task, snapshot);
-    if (hasFreshControlTelemetry(snapshot, nowMs) && remaining !== undefined && remaining < active.bestRemainingM) {
-      active.bestRemainingM = remaining;
+    if (
+      hasFreshControlTelemetry(snapshot, nowMs) &&
+      ((remaining !== undefined && remaining < active.bestRemainingM) || this.recoveryProgressed(active, snapshot))
+    ) {
+      if (remaining !== undefined) active.bestRemainingM = remaining;
       active.lastProgressAtMs = nowMs;
+      active.lastProgressSnapshot = snapshot;
     } else if (nowMs - active.lastProgressAtMs > this.config.progressTimeoutSeconds * 1000) {
       await this.failActive(
         "execution_failed",
@@ -492,6 +508,22 @@ export class TaskEngine {
       this.finished.add(taskId);
       await this.reportTerminal({ taskId, outcome: "complete" });
     }
+  }
+
+  private recoveryProgressed(active: ActiveExecution, snapshot: VehicleSnapshot): boolean {
+    if (active.task.command !== "flight.return_to_launch" && active.task.command !== "flight.land") return false;
+    const previous = active.lastProgressSnapshot;
+    const before = previous.observation;
+    const after = snapshot.observation;
+    if (before === undefined || after === undefined) return false;
+    // Native RTL can climb, return, then descend. A single distance-to-home
+    // minimum would misclassify its climb as a stall. Watch actual movement
+    // and expected mode transitions, retaining both stall and overall limits.
+    return (
+      (snapshot.mode !== previous.mode && active.expectedModes.includes(snapshot.mode)) ||
+      Math.abs(after.altitudeMslM - before.altitudeMslM) >= 0.5 ||
+      haversineM(before.latitudeDeg, before.longitudeDeg, after.latitudeDeg, after.longitudeDeg) >= 0.5
+    );
   }
 
   private isComplete(active: ActiveExecution, snapshot: VehicleSnapshot, nowMs: number): boolean {

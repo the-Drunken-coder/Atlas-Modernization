@@ -11,6 +11,19 @@ export type Readiness = { ready: boolean; failures: ReadinessFailure[] };
 const HEARTBEAT_FRESH_MS = 3000;
 const POSITION_FRESH_MS = 5000;
 
+export function checkBatteryReadiness(snapshot: VehicleSnapshot, config: AssetConfig): ReadinessFailure | undefined {
+  if (snapshot.batteryRemainingPercent === undefined) {
+    return { check: "battery", message: "Battery state is unknown. Wait for a battery reading before flight tasking." };
+  }
+  if (snapshot.batteryRemainingPercent < config.minBatteryPercent) {
+    return {
+      check: "battery",
+      message: `Battery ${snapshot.batteryRemainingPercent}% is below the ${config.minBatteryPercent}% minimum.`
+    };
+  }
+  return undefined;
+}
+
 /**
  * Flight readiness: the host accepts flight Tasks only when every check
  * passes. Failures carry actionable messages so an operator can correct the
@@ -65,12 +78,8 @@ export function checkFlightReadiness(snapshot: VehicleSnapshot, config: AssetCon
     });
   }
 
-  if (snapshot.batteryRemainingPercent !== undefined && snapshot.batteryRemainingPercent < config.minBatteryPercent) {
-    failures.push({
-      check: "battery",
-      message: `Battery ${snapshot.batteryRemainingPercent}% is below the ${config.minBatteryPercent}% minimum.`
-    });
-  }
+  const batteryFailure = checkBatteryReadiness(snapshot, config);
+  if (batteryFailure !== undefined) failures.push(batteryFailure);
 
   if (!snapshot.launchElevationVerified || snapshot.launchElevationM === undefined) {
     failures.push({

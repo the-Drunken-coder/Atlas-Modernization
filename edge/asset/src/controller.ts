@@ -1,6 +1,6 @@
 import type { TaskResource } from "@the-drunken-coder/atlas-sdk";
 import { common, minimal } from "node-mavlink";
-import { paramReadCommand, returnToLaunchCommand } from "./commands.js";
+import { commandAckAccepted, paramReadCommand, returnToLaunchCommand } from "./commands.js";
 import type { AssetConfig } from "./config.js";
 import type { CoreGateway } from "./core-client.js";
 import { type FlightTelemetry } from "./core-client.js";
@@ -14,6 +14,7 @@ type HeartbeatMessage = InstanceType<typeof minimal.Heartbeat>;
 type GlobalPositionMessage = InstanceType<typeof common.GlobalPositionInt>;
 type SysStatusMessage = InstanceType<typeof common.SysStatus>;
 type ParamValueMessage = InstanceType<typeof common.ParamValue>;
+type CommandAckMessage = InstanceType<typeof common.CommandAck>;
 
 export type { AuthoritativeTask };
 
@@ -90,6 +91,7 @@ export function flightTelemetryForCheckin(snapshot: VehicleSnapshot, nowMs: numb
 const GCS_TYPE = minimal.MavType.GCS;
 const FS_GCS_PARAM = "FS_GCS_ENABLE";
 const PARAM_VERIFY_TIMEOUT_MS = 10_000;
+const CORE_LOSS_RTL_RETRY_MS = 1000;
 
 /**
  * One Asset Host process for one quadcopter. Orchestrates the MAVLink link,
@@ -105,6 +107,8 @@ export class AssetController {
   private running = false;
   private coreDownSince: number | undefined;
   private coreLossRecovery = false;
+  private coreLossRecoveryConfirmed = false;
+  private lastCoreLossRecoveryAttemptMs: number | undefined;
   private initiallyLandedAndDisarmed = false;
   private ready = false;
   private gcsFailsafeChecked = false;
@@ -178,6 +182,8 @@ export class AssetController {
       if (
         airborne &&
         snapshot.guided &&
+        this.deps.engine.activeCommand() !== "flight.land" &&
+        this.deps.engine.activeCommand() !== "flight.return_to_launch" &&
         hasFreshControlTelemetry(snapshot, this.now()) &&
         this.link?.status().state === "open"
       ) {
@@ -255,6 +261,17 @@ export class AssetController {
         if (value.paramId === FS_GCS_PARAM) {
           tracker.observeGcsFailsafe(value.paramValue !== 0);
           this.gcsFailsafeChecked = true;
+        }
+        break;
+      }
+      case "COMMAND_ACK": {
+        const ack = message.message as CommandAckMessage;
+        if (
+          this.coreLossRecovery &&
+          ack.command === common.MavCmd.NAV_RETURN_TO_LAUNCH &&
+          commandAckAccepted(ack.result)
+        ) {
+          this.coreLossRecoveryConfirmed = true;
         }
         break;
       }
@@ -340,7 +357,9 @@ export class AssetController {
       // time so execution never acts on the pre-await authority snapshot.
       const controlNow = this.now();
       const controlSnapshot = this.snapshot();
-      if (!this.isCoreDown()) {
+      if (this.coreLossRecovery) {
+        await this.watchCoreLossRecovery(controlSnapshot, controlNow);
+      } else if (!this.isCoreDown()) {
         try {
           await this.deps.engine.ingest(this.lastTasks, controlSnapshot, controlNow);
         } catch (error) {
@@ -377,8 +396,10 @@ export class AssetController {
       if (reconciliationTaskId !== undefined && !tasks.some((task) => task.task_id === reconciliationTaskId)) {
         tasks.push(await this.deps.core.getTask(reconciliationTaskId));
       }
-      if (this.coreDownSince !== undefined) {
-        this.log("info", "Core reachable again; reconciling authoritative state before continuing.");
+      if (this.coreDownSince !== undefined || this.coreLossRecovery) {
+        if (this.coreDownSince !== undefined) {
+          this.log("info", "Core reachable again; reconciling authoritative state before continuing.");
+        }
         await this.reconcileAfterReconnect(tasks);
       }
       this.lastTasks = toAuthoritative(tasks);
@@ -393,9 +414,9 @@ export class AssetController {
 
   private async reconcileAfterReconnect(tasks: TaskResource[]): Promise<void> {
     // The engine reconciles against the fresh authoritative list on its next
-    // ingest. When recovery RTL already runs, reconnection leaves recovery
-    // running: the interrupted action is finished locally and reported now,
-    // never resumed.
+    // ingest. Once recovery RTL is requested, the interrupted action is
+    // finished locally and reported now, never resumed. Recovery retries
+    // survive reconnection until the aircraft confirms the request.
     if (this.coreLossRecovery) {
       this.recoveryTaskToFail ??= this.deps.engine.abandonActiveForRecovery();
       if (this.recoveryTaskToFail !== undefined) {
@@ -408,35 +429,54 @@ export class AssetController {
           await this.deps.core.reportFail(
             this.recoveryTaskToFail,
             "execution_failed",
-            "Core link lost; recovery RTL started and the interrupted action was not resumed."
+            "Core link lost; recovery RTL requested and the interrupted action was not resumed."
           );
         }
         this.recoveryTaskToFail = undefined;
-      } else {
+      } else if (this.coreLossRecoveryConfirmed) {
         this.log("info", "Recovery RTL already runs; the interrupted action is not resumed.");
       }
+      if (!this.coreLossRecoveryConfirmed) return;
       this.coreLossRecovery = false;
+      this.coreLossRecoveryConfirmed = false;
+      this.lastCoreLossRecoveryAttemptMs = undefined;
     }
   }
 
   private async watchCoreLossRecovery(snapshot: VehicleSnapshot, now: number): Promise<void> {
-    const downMs = now - (this.coreDownSince ?? now);
+    if (
+      this.coreLossRecovery &&
+      hasFreshControlTelemetry(snapshot, now) &&
+      (snapshot.mode === "RTL" || snapshot.mode === "LAND")
+    ) {
+      this.coreLossRecoveryConfirmed = true;
+    }
+    const graceMs = this.config.coreLossGraceSeconds * 1000;
+    const downMs = this.coreLossRecovery ? graceMs : now - (this.coreDownSince ?? now);
     const shouldRecover = shouldRequestCoreLossRecovery({
       downMs,
-      graceMs: this.config.coreLossGraceSeconds * 1000,
+      graceMs,
       guided: snapshot.guided,
       activeCommand: this.deps.engine.activeCommand(),
-      recoveryRunning: this.coreLossRecovery,
+      recoveryRunning: this.coreLossRecoveryConfirmed,
       telemetryFresh: hasFreshControlTelemetry(snapshot, now)
     });
     if (!shouldRecover || this.link === undefined) return;
+    if (
+      this.lastCoreLossRecoveryAttemptMs !== undefined &&
+      now - this.lastCoreLossRecoveryAttemptMs < CORE_LOSS_RTL_RETRY_MS
+    )
+      return;
+    this.lastCoreLossRecoveryAttemptMs = now;
+    // Sending can fail after a partial write. Retain recovery intent for
+    // reconnect reconciliation, and retry until the aircraft confirms it.
+    this.coreLossRecovery = true;
     try {
       await this.link.send(returnToLaunchCommand(this.config.vehicleSystemId, this.config.vehicleComponentId));
     } catch (error) {
       this.log("warn", `Core-loss RTL send failed: ${shortError(error)}`);
       return;
     }
-    this.coreLossRecovery = true;
     this.log("warn", "Core-loss grace expired under Atlas control; recovery RTL requested.");
   }
 

@@ -18,6 +18,8 @@ altitude and settle into a position hold.
 
 - Connected vehicle identity matches startup configuration.
 - Aircraft armed, ready, and in Guided mode.
+- Battery telemetry is known and meets the configured minimum, including
+  after Core authorizes the start.
 - No other flight Task active. Go-to during takeoff is rejected.
 
 ## Outcomes

@@ -10,18 +10,22 @@ Recover the aircraft: return to launch, land, and disarm.
 - The native RTL mode transition is expected Atlas-requested behavior, not
   pilot takeover, and is observed through completion.
 - Requested after Core-loss grace expiry only while Atlas has control
-  (Guided). Never overrides manual flight.
+  (Guided). Never overrides manual flight. Recovery retries at most once per
+  second until an accepted acknowledgement or observed RTL/Land confirms it.
+  Reconnection to Core does not cancel an unconfirmed recovery request.
 
 ## Preconditions (enforced by the host at execution)
 
-- Aircraft airborne. When issued as Core-loss recovery, Atlas must have
-  control (Guided mode).
+- For a Task, aircraft armed with relative altitude outside the 0.3 m
+  touchdown tolerance. Low or unknown battery does not block recovery.
+  When issued as Core-loss recovery, Atlas must have control (Guided mode).
 
 ## Outcomes
 
 - `completed`: returned, landed, and disarmed at launch.
 - `failed`: timeout or no progress; the autopilot recovery action is left
-  running.
+  running. Fresh movement or expected native mode transitions count as
+  progress, including the initial RTL climb.
 - No ordinary cancellation after starting (`supports_cancel` is false).
 
 ## Durable effects

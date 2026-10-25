@@ -1,6 +1,7 @@
 import type { MavLinkData } from "node-mavlink";
 import { describe, expect, it } from "vitest";
 import type { AssetConfig } from "./config.js";
+import { checkFlightReadiness } from "./readiness.js";
 import {
   type AuthoritativeTask,
   type CommandSender,
@@ -46,6 +47,7 @@ function guidedSnapshot(overrides: Partial<VehicleSnapshot> = {}): VehicleSnapsh
     launchLatitudeDeg: 37.7749,
     launchLongitudeDeg: -122.4194,
     launchElevationVerified: true,
+    batteryRemainingPercent: 95,
     observation: {
       latitudeDeg: 37.7749,
       longitudeDeg: -122.4194,
@@ -113,6 +115,170 @@ function task(taskId: string, command: string, input: Record<string, unknown>): 
 }
 
 describe("TaskEngine", () => {
+  it("requires known battery telemetry for readiness", () => {
+    const snapshot = guidedSnapshot();
+    delete snapshot.batteryRemainingPercent;
+    expect(checkFlightReadiness(snapshot, config, 1_000_000)).toMatchObject({
+      ready: false,
+      failures: expect.arrayContaining([expect.objectContaining({ check: "battery" })])
+    });
+    snapshot.batteryRemainingPercent = config.minBatteryPercent;
+    expect(checkFlightReadiness(snapshot, config, 1_000_000).ready).toBe(true);
+  });
+
+  it.each(["flight.takeoff", "flight.goto"])("rechecks battery before starting %s", async (command) => {
+    for (const battery of [undefined, 19]) {
+      const { engine, sent, reports, setControlState } = setup();
+      const snapshot = guidedSnapshot();
+      if (battery === undefined) delete snapshot.batteryRemainingPercent;
+      else snapshot.batteryRemainingPercent = battery;
+      setControlState(snapshot, 1_000_000);
+      await engine.ingest(
+        [task("task-1", command, { latitude: 37.78, longitude: -122.41, altitude_m: 570 })],
+        snapshot,
+        1_000_000
+      );
+      expect(sent).toHaveLength(0);
+      expect(reports).toContainEqual({
+        type: "fail",
+        taskId: "task-1",
+        code: "precondition_failed",
+        message: expect.stringMatching(/battery/i)
+      });
+    }
+  });
+
+  it("rechecks battery after Core authorizes a start", async () => {
+    const { engine, sent, reports, setControlState } = setup({
+      reportStart: async () => setControlState(guidedSnapshot({ batteryRemainingPercent: 10 }), 1_000_000)
+    });
+    await engine.ingest([task("task-1", "flight.takeoff", { altitude_m: 570 })], guidedSnapshot(), 1_000_000);
+    expect(sent).toHaveLength(0);
+    expect(reports).toContainEqual({
+      type: "fail",
+      taskId: "task-1",
+      code: "precondition_failed",
+      message: expect.stringMatching(/battery/i)
+    });
+  });
+
+  it.each(["flight.return_to_launch", "flight.land"])("rejects grounded %s", async (command) => {
+    const { engine, sent, reports, setControlState } = setup();
+    const snapshot = guidedSnapshot({ armed: false });
+    setControlState(snapshot, 1_000_000);
+    await engine.ingest([task("task-1", command, {})], snapshot, 1_000_000);
+    expect(sent).toHaveLength(0);
+    expect(reports).toContainEqual({
+      type: "fail",
+      taskId: "task-1",
+      code: "precondition_failed",
+      message: expect.stringContaining("airborne")
+    });
+  });
+
+  it.each([
+    ["flight.return_to_launch", "RTL", 6],
+    ["flight.land", "LAND", 9]
+  ] as const)("observes %s beyond the stall interval while recovery progresses", async (command, mode, customMode) => {
+    const { engine, sent, reports, setControlState } = setup();
+    const recovery = task("task-1", command, {});
+    const observation = guidedSnapshot().observation!;
+    const initial = guidedSnapshot({
+      batteryRemainingPercent: 10,
+      observation: { ...observation, altitudeMslM: 580, relativeAltitudeM: 20 }
+    });
+    setControlState(initial, 1_000_000);
+    await engine.ingest([recovery], initial, 1_000_000);
+    for (const elapsed of [20_000, 40_000, 60_000]) {
+      const altitude = command === "flight.return_to_launch" ? 20 + elapsed / 10_000 : 20 - elapsed / 10_000;
+      const snapshot = guidedSnapshot({
+        mode,
+        customMode,
+        guided: false,
+        lastHeartbeatMs: 1_000_000 + elapsed,
+        observation: {
+          ...observation,
+          altitudeMslM: 560 + altitude,
+          relativeAltitudeM: altitude,
+          observedAtMs: 1_000_000 + elapsed
+        }
+      });
+      await engine.ingest([{ ...recovery, status: "in_progress" }], snapshot, 1_000_000 + elapsed);
+    }
+    expect(engine.hasActiveTask()).toBe(true);
+    expect(reports.filter((report) => report.type === "fail")).toEqual([]);
+    await engine.ingest(
+      [{ ...recovery, status: "in_progress" }],
+      guidedSnapshot({
+        armed: false,
+        mode,
+        customMode,
+        guided: false,
+        lastHeartbeatMs: 1_080_000,
+        observation: { ...observation, observedAtMs: 1_080_000 }
+      }),
+      1_080_000
+    );
+    expect(reports).toContainEqual({ type: "complete", taskId: "task-1" });
+    expect(sent).toHaveLength(1);
+  });
+
+  it.each(["flight.return_to_launch", "flight.land"])(
+    "keeps the overall timeout for progressing %s",
+    async (command) => {
+      const { engine, reports, setControlState } = setup();
+      const recovery = task("task-1", command, {});
+      const observation = { ...guidedSnapshot().observation!, altitudeMslM: 580, relativeAltitudeM: 20 };
+      const initial = guidedSnapshot({ observation });
+      delete initial.batteryRemainingPercent;
+      setControlState(initial, 1_000_000);
+      await engine.ingest([recovery], initial, 1_000_000);
+      for (const elapsed of [20_000, 40_000, 301_000]) {
+        await engine.ingest(
+          [{ ...recovery, status: "in_progress" }],
+          guidedSnapshot({
+            lastHeartbeatMs: 1_000_000 + elapsed,
+            observation: {
+              ...observation,
+              latitudeDeg: observation.latitudeDeg + elapsed / 1e8,
+              observedAtMs: 1_000_000 + elapsed
+            }
+          }),
+          1_000_000 + elapsed
+        );
+      }
+      expect(reports).toContainEqual({
+        type: "fail",
+        taskId: "task-1",
+        code: "execution_failed",
+        message: expect.stringContaining("No completion")
+      });
+    }
+  );
+
+  it.each(["flight.return_to_launch", "flight.land"])("still fails stalled %s", async (command) => {
+    const { engine, reports, setControlState } = setup();
+    const recovery = task("task-1", command, {});
+    const observation = { ...guidedSnapshot().observation!, altitudeMslM: 580, relativeAltitudeM: 20 };
+    const initial = guidedSnapshot({ observation });
+    setControlState(initial, 1_000_000);
+    await engine.ingest([recovery], initial, 1_000_000);
+    await engine.ingest(
+      [{ ...recovery, status: "in_progress" }],
+      guidedSnapshot({
+        lastHeartbeatMs: 1_031_000,
+        observation: { ...observation, observedAtMs: 1_031_000 }
+      }),
+      1_031_000
+    );
+    expect(reports).toContainEqual({
+      type: "fail",
+      taskId: "task-1",
+      code: "execution_failed",
+      message: expect.stringContaining("No progress")
+    });
+  });
+
   it("completes takeoff after reaching altitude and settling into hover", async () => {
     const { engine, sent, reports } = setup();
     const target = task("task-1", "flight.takeoff", { altitude_m: 570 });
@@ -376,9 +542,13 @@ describe("TaskEngine", () => {
   });
 
   it("treats expected RTL and Land transitions as observation, not takeover", async () => {
-    const { engine, reports } = setup();
+    const { engine, reports, setControlState } = setup();
     const rtl = task("task-1", "flight.return_to_launch", {});
-    await engine.ingest([rtl], guidedSnapshot(), 1_000_000);
+    const initial = guidedSnapshot({
+      observation: { ...guidedSnapshot().observation!, altitudeMslM: 570, relativeAltitudeM: 10 }
+    });
+    setControlState(initial, 1_000_000);
+    await engine.ingest([rtl], initial, 1_000_000);
     await engine.ingest(
       [{ ...rtl, status: "in_progress" }],
       guidedSnapshot({ mode: "RTL", customMode: 6, guided: false }),
@@ -414,9 +584,13 @@ describe("TaskEngine", () => {
     ["flight.return_to_launch", "RTL", 6],
     ["flight.land", "LAND", 9]
   ] as const)("fails %s when the pilot leaves its expected native modes", async (command, expectedMode, customMode) => {
-    const { engine, reports } = setup();
+    const { engine, reports, setControlState } = setup();
     const recovery = task("task-1", command, {});
-    await engine.ingest([recovery], guidedSnapshot(), 1_000_000);
+    const initial = guidedSnapshot({
+      observation: { ...guidedSnapshot().observation!, altitudeMslM: 570, relativeAltitudeM: 10 }
+    });
+    setControlState(initial, 1_000_000);
+    await engine.ingest([recovery], initial, 1_000_000);
     await engine.ingest(
       [{ ...recovery, status: "in_progress" }],
       guidedSnapshot({ mode: expectedMode, customMode, guided: false, lastHeartbeatMs: 1_001_000 }),
@@ -437,9 +611,13 @@ describe("TaskEngine", () => {
   });
 
   it("does not complete RTL after landing away from launch", async () => {
-    const { engine, reports } = setup();
+    const { engine, reports, setControlState } = setup();
     const rtl = task("task-1", "flight.return_to_launch", {});
-    await engine.ingest([rtl], guidedSnapshot(), 1_000_000);
+    const initial = guidedSnapshot({
+      observation: { ...guidedSnapshot().observation!, altitudeMslM: 570, relativeAltitudeM: 10 }
+    });
+    setControlState(initial, 1_000_000);
+    await engine.ingest([rtl], initial, 1_000_000);
     await engine.ingest(
       [{ ...rtl, status: "in_progress" }],
       guidedSnapshot({

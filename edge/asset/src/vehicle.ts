@@ -130,7 +130,11 @@ export class VehicleTracker {
   }
 
   observeSysStatus(batteryRemainingPercent: number | undefined): void {
-    if (batteryRemainingPercent === undefined || batteryRemainingPercent < 0 || batteryRemainingPercent > 100) return;
+    if (batteryRemainingPercent === undefined || batteryRemainingPercent < 0 || batteryRemainingPercent > 100) {
+      this.snapshot = { ...this.snapshot };
+      delete this.snapshot.batteryRemainingPercent;
+      return;
+    }
     this.snapshot = { ...this.snapshot, batteryRemainingPercent };
   }
 
