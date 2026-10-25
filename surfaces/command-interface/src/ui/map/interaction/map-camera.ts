@@ -103,9 +103,12 @@ export function geometryForTarget(sources: MapSources, target: MapTarget): UiRaw
 }
 
 export function featureForEntityId(sources: MapSources, entityId: string): MapFeature | undefined {
-  return [...sources.assets.features, ...sources.tracks.features, ...sources.geofeatures.features].find(
-    (feature) => feature.properties.entityId === entityId
-  );
+  for (const source of [sources.assets, sources.tracks, sources.geofeatures]) {
+    for (const feature of source.features) {
+      if (feature.properties.entityId === entityId) return feature;
+    }
+  }
+  return undefined;
 }
 
 export function boundsForGeometry(geometry: UiRawGeometry): [[number, number], [number, number]] | null {

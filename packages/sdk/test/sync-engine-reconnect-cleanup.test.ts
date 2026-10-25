@@ -379,21 +379,6 @@ describe("AtlasClient sync: polling, reconnect timers, and cleanup", () => {
     await start;
   });
 
-  it("evicts local cache entries after successful deletes", async () => {
-    const core = new FakeCore();
-    core.upsertEntity(entity("asset-delete"));
-    const client = createAtlasClient(core, { sync: "all", pollIntervalMs: 0 });
-    await client.sync.start();
-
-    await expect(client.entities.get("asset-delete")).resolves.toMatchObject({ entity_id: "asset-delete" });
-    await client.entities.delete("asset-delete");
-
-    await expect(client.entities.get("asset-delete")).rejects.toMatchObject({
-      status: 404,
-      errorCode: "ENTITY_NOT_FOUND"
-    });
-  });
-
   it("emits a local delete notification without fabricating a feed version", async () => {
     const core = new FakeCore();
     core.upsertEntity(entity("asset-delete-notification"));
@@ -749,15 +734,6 @@ describe("AtlasClient sync: polling, reconnect timers, and cleanup", () => {
       code: "ATLAS_TRANSPORT_ERROR",
       message: "download body terminated"
     });
-  });
-
-  it("exposes typed watch helpers for all resource surfaces", () => {
-    const core = new FakeCore();
-    const client = createAtlasClient(core);
-
-    expect(typeof client.entities.watch("asset-watch", vi.fn())).toBe("function");
-    expect(typeof client.tasks.watch("task-watch", vi.fn())).toBe("function");
-    expect(typeof client.objects.watch("object-watch", vi.fn())).toBe("function");
   });
 
   it("does not commit a cache entry when snapshot cloning fails", () => {

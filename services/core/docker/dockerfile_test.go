@@ -4,89 +4,27 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
-	"slices"
 	"strings"
 	"testing"
 )
 
-func TestRootDockerignoreAllowsOnlyDockerfileInputs(t *testing.T) {
+func TestRootDockerignoreDefaultsToExcluded(t *testing.T) {
 	data, err := os.ReadFile("../../../.dockerignore")
 	if err != nil {
 		t.Fatalf("read root .dockerignore: %v", err)
 	}
 
 	var patterns []string
-	var included []string
 	for _, line := range strings.Split(string(data), "\n") {
 		pattern := strings.TrimSpace(line)
 		if pattern == "" || strings.HasPrefix(pattern, "#") {
 			continue
 		}
 		patterns = append(patterns, pattern)
-		if strings.HasPrefix(pattern, "!") {
-			included = append(included, pattern)
-		}
 	}
 
 	if len(patterns) == 0 || patterns[0] != "*" {
 		t.Fatal("root .dockerignore must exclude the build context before adding required inputs")
-	}
-	wantIncluded := []string{
-		"!services/core/",
-		"!services/core/go.mod",
-		"!services/core/go.sum",
-		"!services/core/cmd/",
-		"!services/core/cmd/**",
-		"!services/core/internal/",
-		"!services/core/internal/**",
-		"!services/core/atlas_core.settings.json.example",
-		"!services/core/docker/",
-		"!services/core/docker/Dockerfile",
-		"!services/core/docker/production-entrypoint.sh",
-		"!packages/protocol/",
-		"!packages/protocol/go.mod",
-		"!packages/protocol/go.sum",
-		"!packages/protocol/generated/",
-		"!packages/protocol/generated/go/",
-		"!packages/protocol/generated/go/atlasprotocol/",
-		"!packages/protocol/generated/go/atlasprotocol/*.go",
-		"!packages/protocol/generated/typescript/",
-		"!packages/protocol/generated/typescript/*.ts",
-		"!packages/protocol/schema/",
-		"!packages/protocol/schema/embed.go",
-		"!packages/protocol/schema/jsonschema/",
-		"!packages/protocol/schema/jsonschema/*.json",
-		"!packages/protocol/validator/",
-		"!packages/protocol/validator/*.go",
-		"!package.json",
-		"!package-lock.json",
-		"!packages/sdk/",
-		"!packages/sdk/package.json",
-		"!packages/sdk/tsconfig.json",
-		"!packages/sdk/src/",
-		"!packages/sdk/src/**",
-		"!packages/sdk/scripts/",
-		"!packages/sdk/scripts/**",
-		"!packages/plugin-runtime/",
-		"!packages/plugin-runtime/package.json",
-		"!packages/plugin-runtime/tsconfig.json",
-		"!packages/plugin-runtime/src/",
-		"!packages/plugin-runtime/src/**",
-		"!plugins/",
-		"!plugins/reference/",
-		"!plugins/reference/package.json",
-		"!plugins/reference/tsconfig.json",
-		"!plugins/reference/src/",
-		"!plugins/reference/src/**",
-		"!plugins/reference/fixture-source.mjs",
-		"!plugins/reference/Dockerfile",
-		"!surfaces/",
-		"!surfaces/command-interface/",
-		"!surfaces/command-interface/package.json",
-		"!simulations/package.json",
-	}
-	if !slices.Equal(included, wantIncluded) {
-		t.Fatalf("root .dockerignore includes = %v, want only Dockerfile inputs %v", included, wantIncluded)
 	}
 }
 

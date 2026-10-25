@@ -19,8 +19,6 @@ var publicGoValidatorDefinitions = []string{
 	"ErrorResponse",
 	"ProtocolRevisionResponse",
 	"EntityCheckInRequest",
-	"EntityCheckInFullResponse",
-	"EntityCheckInMinimalResponse",
 	"EntityCheckInResponse",
 	"FullDatasetResponse",
 	"ChangedSinceResponse",

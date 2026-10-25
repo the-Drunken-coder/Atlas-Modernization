@@ -18,7 +18,7 @@ import {
   isTaskProgressRequest,
   isTaskStartRequest
 } from "../src";
-import { isObjectDetailResource, isObjectResource } from "../src/protocol.js";
+import { isCommandCatalog, isCommandManifest, isObjectDetailResource, isObjectResource } from "../src/protocol.js";
 
 const validators = {
   EntityCheckInRequest: isEntityCheckInRequest,
@@ -39,6 +39,33 @@ const validators = {
 } as const;
 
 describe("generated request validator conformance", () => {
+  it("rejects Unicode whitespace-only strings while accepting visible content", () => {
+    for (const value of ["", " ", "\u0085", "\uFEFF", "\u2000\u2029\u3000"]) {
+      expect(isObjectCreateRequest({ object_id: value })).toBe(false);
+    }
+    expect(isObjectCreateRequest({ object_id: "\uFEFFvalue\u0085" })).toBe(true);
+  });
+
+  it("rejects duplicate command names in catalogs and manifests", () => {
+    const command = {
+      command: "test.command",
+      name: "Test",
+      description: "Test command",
+      input_schema: "atlas.tasking.EmptyObject"
+    };
+    expect(isCommandCatalog([command])).toBe(true);
+    expect(isCommandCatalog([command, command])).toBe(false);
+    const manifest = {
+      command: "test.command",
+      description: "Test command",
+      scheduling: "queued",
+      supports_cancel: true,
+      supports_progress: true
+    };
+    expect(isCommandManifest([manifest])).toBe(true);
+    expect(isCommandManifest([manifest, manifest])).toBe(false);
+  });
+
   for (const testCase of requestCorpus.cases) {
     it(testCase.name, () => {
       const validate = validators[testCase.definition as keyof typeof validators];
@@ -46,6 +73,13 @@ describe("generated request validator conformance", () => {
       expect(validate(testCase.value)).toBe(testCase.valid);
     });
   }
+
+  it("uses Unicode whitespace rules for non-empty strings", () => {
+    for (const entity_type of ["\u00a0", "\u1680", "\u2000", "\u2028", "\u2029", "\ufeff"]) {
+      expect(isEntityCreateRequest({ entity_id: "asset-1", entity_type })).toBe(false);
+    }
+    expect(isEntityCreateRequest({ entity_id: "asset-1", entity_type: "\u200b" })).toBe(true);
+  });
 
   it("rejects aggregate polygon position overflow in entity check-ins", () => {
     const rings = Array.from({ length: 2 }, () => Array.from({ length: 5_001 }, () => [0, 0]));
@@ -56,7 +90,6 @@ describe("generated request validator conformance", () => {
     let nested: Record<string, unknown> = { leaf: true };
     for (let depth = 0; depth < 3_000; depth++) nested = { nested };
 
-    expect(() => isObjectCreateRequest({ object_id: "object-deep-json", extra: nested })).not.toThrow();
     expect(isObjectCreateRequest({ object_id: "object-deep-json", extra: nested })).toBe(true);
 
     const cycle: Record<string, unknown> = {};

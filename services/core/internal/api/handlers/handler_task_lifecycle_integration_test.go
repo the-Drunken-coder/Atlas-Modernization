@@ -21,7 +21,7 @@ import (
 
 func TestEntityCheckinMergesFlatAndComponentTelemetry(t *testing.T) {
 	pool := openIsolatedFeedIntegrationPool(t)
-	handler := NewHandler(&atlasdb.DB{Pool: pool}, nil, zerolog.Nop(), &config.Config{})
+	handler := newConfiguredTestHandler(&atlasdb.DB{Pool: pool}, nil, zerolog.Nop(), &config.Config{})
 	assetID := "handler-checkin-" + time.Now().UTC().Format("20060102150405.000000000")
 	if _, err := handler.entityActions.Create(t.Context(), actions.CreateEntityParams{EntityID: assetID, EntityType: "asset"}); err != nil {
 		t.Fatalf("create Asset: %v", err)
@@ -29,7 +29,7 @@ func TestEntityCheckinMergesFlatAndComponentTelemetry(t *testing.T) {
 
 	router := chi.NewRouter()
 	router.Post("/entities/{entity_id}/checkin", handler.EntityCheckin)
-	var response protocol.EntityCheckInFullResponse
+	var response protocol.EntityCheckInResponse
 	requestTaskingRoute(t, router, http.MethodPost, "/entities/"+assetID+"/checkin", map[string]any{
 		"latitude":    38.5,
 		"heading_deg": 91.25,
@@ -60,7 +60,7 @@ func TestEntityCheckinMergesFlatAndComponentTelemetry(t *testing.T) {
 
 func TestTaskLifecycleRoutesWithFixtureCommands(t *testing.T) {
 	pool := openIsolatedFeedIntegrationPool(t)
-	handler := NewHandler(&atlasdb.DB{Pool: pool}, nil, zerolog.Nop(), &config.Config{})
+	handler := newConfiguredTestHandler(&atlasdb.DB{Pool: pool}, nil, zerolog.Nop(), &config.Config{})
 	catalog := taskingHandlerFixture[protocol.CommandCatalog](t, "catalog.json")
 	catalog = append(catalog, protocol.CommandDefinition{
 		Command:      "fixture.precision",

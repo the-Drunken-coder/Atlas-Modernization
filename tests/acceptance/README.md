@@ -37,3 +37,5 @@ The label never replaces the random ownership suffix, so simultaneous or diagnos
 
 The Entity journey covers one authenticated client's create, update, and delete lifecycle plus a second client's feed observations and fresh reads. It does not claim reconnect or Core-restart convergence, browser behavior, or server-side fault coverage; those belong to later acceptance journeys. After the valid create assertion, it deliberately changes only the captured observation's alias and verifies that the assertion rejects the mismatch. This guard check does not mutate the Core image or any product source.
 The built Command Interface smoke and its two-engine local commands are documented in [browser/README.md](browser/README.md).
+
+The SDK recovery scenario writes invocation settings and phase timings to `recovery-events.jsonl`. These diagnostic events carry no assertion result; observed recovery checks remain in `evidence.jsonl`.

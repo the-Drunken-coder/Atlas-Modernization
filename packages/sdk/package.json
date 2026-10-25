@@ -65,7 +65,6 @@
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "tsc -p tsconfig.json",
-    "prebuild": "node ./scripts/generate-package-metadata.mjs",
     "prepack": "npm run clean && npm run build",
     "test:package": "node ./test/packed-consumer-smoke.mjs",
     "lint": "biome lint --config-path biome.json .",

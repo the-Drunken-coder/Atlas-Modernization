@@ -22,15 +22,6 @@ func TestCreateDeleteAndUniqueValueRacesDoNotDeadlock(t *testing.T) {
 	objectID := fmt.Sprintf("race-object-%d", suffix)
 	aliasOwnerID := fmt.Sprintf("race-alias-owner-%d", suffix)
 	aliasCreateID := fmt.Sprintf("race-alias-create-%d", suffix)
-	ids := []string{entityID, objectID, aliasOwnerID, aliasCreateID}
-	t.Cleanup(func() {
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer cleanupCancel()
-		_, _ = pool.Exec(cleanupCtx, `DELETE FROM entities WHERE entity_id = ANY($1)`, []string{entityID, aliasOwnerID, aliasCreateID})
-		_, _ = pool.Exec(cleanupCtx, `DELETE FROM objects WHERE object_id = $1`, objectID)
-		_, _ = pool.Exec(cleanupCtx, `DELETE FROM object_deletion_fences WHERE object_id = $1`, objectID)
-		_, _ = pool.Exec(cleanupCtx, `DELETE FROM atlas_change_events WHERE event->>'id' = ANY($1)`, ids)
-	})
 
 	if _, err := entityActions.Create(ctx, CreateEntityParams{EntityID: entityID, EntityType: "asset"}); err != nil {
 		t.Fatalf("create entity race fixture: %v", err)
@@ -107,16 +98,6 @@ func TestVersionedMutationsWaitForClockBeforeResourceRows(t *testing.T) {
 	if _, err := objectActions.Create(ctx, CreateObjectParams{ObjectID: objectID}); err != nil {
 		t.Fatalf("create object: %v", err)
 	}
-	t.Cleanup(func() {
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer cleanupCancel()
-		for _, id := range []string{entityID, createdEntityID} {
-			_, _ = pool.Exec(cleanupCtx, `DELETE FROM entities WHERE entity_id = $1`, id)
-		}
-		_, _ = pool.Exec(cleanupCtx, `DELETE FROM objects WHERE object_id = $1`, objectID)
-		_, _ = pool.Exec(cleanupCtx, `DELETE FROM object_deletion_fences WHERE object_id = $1`, objectID)
-		_, _ = pool.Exec(cleanupCtx, `DELETE FROM atlas_change_events WHERE event->>'id' = ANY($1)`, []string{entityID, createdEntityID, objectID})
-	})
 
 	type lockedResource struct {
 		query string

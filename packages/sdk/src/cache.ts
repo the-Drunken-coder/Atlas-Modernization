@@ -288,6 +288,8 @@ export class ResourceCache {
     this.localDeleteInstances.clear();
     this.locallyNotifiedDeletes.clear();
     this.localDeleteOperations.clear();
+    // The hydration epoch already invalidates reads from the previous snapshot.
+    this.generations.clear();
     this.pointReadStates.clear();
     this.deferredPointNotFound.clear();
     for (const entity of resources.entities) this.acceptResource("entity", entity.entity_id, entity);

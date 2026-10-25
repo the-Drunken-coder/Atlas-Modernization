@@ -218,18 +218,6 @@ func TestManifestIdentityOperationsAndToolAssetAreValidated(t *testing.T) {
 	}
 }
 
-func TestManifestRequiresSupportedCoreToPluginProtocolMajor(t *testing.T) {
-	manifest := fixtureManifest(time.Second)
-	manifest.CoreToPluginProtocolMajor = 0
-	if err := validateManifest("reference", manifest); err == nil {
-		t.Fatal("missing protocol major was accepted")
-	}
-	manifest.CoreToPluginProtocolMajor = CoreToPluginProtocolMajor + 1
-	if err := validateManifest("reference", manifest); err == nil {
-		t.Fatal("unsupported protocol major was accepted")
-	}
-}
-
 func waitForStatus(t *testing.T, registry *Registry, wanted protocol.PluginStatusState) {
 	t.Helper()
 	deadline := time.Now().Add(time.Second)

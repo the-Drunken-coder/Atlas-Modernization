@@ -199,12 +199,12 @@ func TestParseRFC3339TimestampAcceptsNanoPrecision(t *testing.T) {
 func TestEntityCheckInResponseContainsOnlyEntity(t *testing.T) {
 	now := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
 	entity := serializers.SerializeEntity(&models.Entity{EntityID: "asset-1", Type: "asset", CreatedAt: now, UpdatedAt: now, Version: 1})
-	response := protocol.EntityCheckInFullResponse{Entity: *entity}
+	response := protocol.EntityCheckInResponse{Entity: *entity}
 	encoded, err := json.Marshal(response)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if validationErrors := protocol.ValidateEntityCheckInFullResponse(json.RawMessage(encoded)); len(validationErrors) > 0 {
+	if validationErrors := protocol.ValidateEntityCheckInResponse(json.RawMessage(encoded)); len(validationErrors) > 0 {
 		t.Fatalf("response failed Protocol validation: %v", validationErrors)
 	}
 	if bytes.Contains(encoded, []byte(`"tasks"`)) {

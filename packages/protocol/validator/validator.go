@@ -468,7 +468,7 @@ func semanticErrors(definition string, value any) []string {
 		return resourceGeometrySemanticErrors(value)
 	case "FeedEvent":
 		return feedEventGeometrySemanticErrors(value)
-	case "EntityCheckInFullResponse", "EntityCheckInMinimalResponse", "EntityCheckInResponse":
+	case "EntityCheckInResponse":
 		return entityCheckInResponseGeometrySemanticErrors(value)
 	case "FullDatasetResponse":
 		return fullDatasetResponseGeometrySemanticErrors(value)

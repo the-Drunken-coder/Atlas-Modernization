@@ -18,9 +18,6 @@ var ErrNilDB = errors.New("database: nil DB")
 // ErrNilPool is returned when Ping is called but the connection pool was never initialized.
 var ErrNilPool = errors.New("database: nil pool")
 
-// coreSchemaTables are owned by Atlas Core schema migrations.
-var coreSchemaTables = []string{"entities", "tasks", "asset_runtime_generations", "asset_runtimes", "objects", "atlas_change_clock", "atlas_change_events", "object_deletion_fences", "storage_deletion_outbox", "storage_upload_intents", "resource_instance_tokens", "entity_movement_samples", "admin_records"}
-
 // baselineSchemaDDL is immutable migration v1. Later schema changes must be
 // appended as new migrations rather than changing these statements.
 func baselineSchemaDDL() []string {

@@ -158,7 +158,6 @@ export type ResourceOperation = {
   if_match_version?: number;
   plugin_id?: string;
   plugin_operation_id?: string;
-  fields?: "full" | "minimal";
 };
 
 export type SubscriptionOperation = {

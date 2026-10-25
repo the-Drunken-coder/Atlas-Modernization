@@ -339,30 +339,6 @@
       ],
       "type": "object"
     },
-    "EntityCheckInFullResponse": {
-      "additionalProperties": false,
-      "properties": {
-        "entity": {
-          "$ref": "#/$defs/EntityResource"
-        }
-      },
-      "required": [
-        "entity"
-      ],
-      "type": "object"
-    },
-    "EntityCheckInMinimalResponse": {
-      "additionalProperties": false,
-      "properties": {
-        "entity": {
-          "$ref": "#/$defs/EntityResource"
-        }
-      },
-      "required": [
-        "entity"
-      ],
-      "type": "object"
-    },
     "EntityCheckInRequest": {
       "additionalProperties": false,
       "properties": {
@@ -400,14 +376,16 @@
       "description": "Altitude values (altitude_m) are meters above mean sea level. Sources must convert other vertical references before reporting."
     },
     "EntityCheckInResponse": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/EntityCheckInFullResponse"
-        },
-        {
-          "$ref": "#/$defs/EntityCheckInMinimalResponse"
+      "additionalProperties": false,
+      "properties": {
+        "entity": {
+          "$ref": "#/$defs/EntityResource"
         }
-      ]
+      },
+      "required": [
+        "entity"
+      ],
+      "type": "object"
     },
     "EntityDeleteEvent": {
       "additionalProperties": false,

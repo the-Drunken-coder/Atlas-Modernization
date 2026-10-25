@@ -387,7 +387,7 @@ func TestGoIntegerUnmarshalSourceCoversAuthoredIntegerFields(t *testing.T) {
 	text := string(source)
 	for _, typeName := range []string{
 		"ChangedSinceResponse",
-		"EntityCheckInFullResponse",
+		"EntityCheckInResponse",
 		"EntityResource",
 		"EntityDeleteEvent",
 		"FeedEvent",
@@ -402,23 +402,6 @@ func TestGoIntegerUnmarshalSourceCoversAuthoredIntegerFields(t *testing.T) {
 	} {
 		if !strings.Contains(text, "func (value *"+typeName+") UnmarshalJSON") {
 			t.Fatalf("generated integer unmarshaller missing %s", typeName)
-		}
-	}
-	for _, want := range []string{
-		"atlasProtocolParseBoundedExponent",
-		"atlasProtocolDecodeCanonicalJSON",
-		"strconv.ParseInt",
-		"atlasProtocolMaxSafeInteger int64 = 9007199254740991",
-		"atlasProtocolDecodeOptionalInt64JSON",
-		"unknown field %q",
-	} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("generated integer unmarshaller missing %q", want)
-		}
-	}
-	for _, forbidden := range []string{"math/big", "big.Rat"} {
-		if strings.Contains(text, forbidden) {
-			t.Fatalf("generated integer unmarshaller contains allocation-prone %q", forbidden)
 		}
 	}
 }

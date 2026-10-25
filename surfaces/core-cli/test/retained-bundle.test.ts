@@ -107,6 +107,83 @@ describe("retained bundle", () => {
     );
   });
 
+  it.each([
+    ["multiline mount", 'services:\n  api:\n    volumes:\n      - "./extra.json:/app/config.json:ro"\n'],
+    [
+      "long bind",
+      "services:\n  api:\n    volumes:\n      - type: bind\n        source: extra.json\n        target: /app/config.json\n"
+    ],
+    ["build Dockerfile", "services:\n  api:\n    build: {context: ., dockerfile: extra.json}\n"],
+    ["scalar env_file", "services:\n  api:\n    env_file: extra.json\n"],
+    ["list env_file", "services:\n  api:\n    env_file:\n      - extra.json\n"],
+    ["long env_file", "services:\n  api:\n    env_file:\n      - path: extra.json\n"],
+    ["config", "configs:\n  settings:\n    file: extra.json\nservices: {}\n"],
+    ["secret", "secrets:\n  credentials:\n    file: extra.json\nservices: {}\n"],
+    ["extends", "services:\n  api:\n    extends: {file: extra.json, service: base}\n"],
+    [
+      "merged alias",
+      'x-base: &base\n  volumes: ["./extra.json:/app/config.json:ro"]\nservices:\n  api:\n    <<: *base\n'
+    ]
+  ])("checks %s dependencies before replacing the previous bundle", (_name, compose) => {
+    const { source, files } = writeSourceBundle();
+    const target = join(temporaryDirectory(), "base");
+    const previous = copyRetainedBundle({ sourceRoot: source, targetRoot: target, files });
+    writeFileSync(join(source, "docker-compose.yml"), compose);
+    const options = { sourceRoot: source, targetRoot: target, files, composeFiles: ["docker-compose.yml"] };
+
+    expect(() => copyRetainedBundle(options)).toThrow(/references missing file extra\.json/);
+    verifyRetainedBundle(target, previous);
+
+    writeFileSync(join(source, "extra.json"), "{}\n");
+    const complete = copyRetainedBundle({ ...options, files: [...files, "extra.json"] });
+    verifyRetainedBundle(target, complete);
+  });
+
+  it("checks every file in a relative directory bind", () => {
+    const { source, files } = writeSourceBundle();
+    mkdirSync(join(source, "config"));
+    writeFileSync(join(source, "config", "one.json"), "{}\n");
+    writeFileSync(join(source, "config", "two.json"), "{}\n");
+    writeFileSync(join(source, "docker-compose.yml"), 'services:\n  api:\n    volumes: ["./config:/app/config:ro"]\n');
+    const options = {
+      sourceRoot: source,
+      targetRoot: join(temporaryDirectory(), "base"),
+      files: [...files, "config/one.json"],
+      composeFiles: ["docker-compose.yml"]
+    };
+    expect(() => copyRetainedBundle(options)).toThrow(/references missing file config[/\\]two\.json/);
+    const complete = copyRetainedBundle({ ...options, files: [...options.files, "config/two.json"] });
+    verifyRetainedBundle(options.targetRoot, complete);
+  });
+
+  it("ignores optional env files and container paths but rejects a relative bind escaping the bundle", () => {
+    const { source, files } = writeSourceBundle();
+    const options = {
+      sourceRoot: source,
+      targetRoot: join(temporaryDirectory(), "base"),
+      files,
+      composeFiles: ["docker-compose.yml"]
+    };
+    writeFileSync(
+      join(source, "docker-compose.yml"),
+      `services:
+  api:
+    command: ["./container-only"]
+    volumes: ["data:/app/data", "/app/cache"]
+    env_file:
+      - path: optional.env
+        required: false
+`
+    );
+    const previous = copyRetainedBundle(options);
+    writeFileSync(
+      join(source, "docker-compose.yml"),
+      'services:\n  api:\n    volumes:\n      - "../outside:/app/config:ro"\n'
+    );
+    expect(() => copyRetainedBundle(options)).toThrow(/escapes its root/);
+    verifyRetainedBundle(options.targetRoot, previous);
+  });
+
   it("rejects extra files in a bundle because the hash covers the complete file set", () => {
     const { source, files } = writeSourceBundle();
     const target = join(temporaryDirectory(), "base");

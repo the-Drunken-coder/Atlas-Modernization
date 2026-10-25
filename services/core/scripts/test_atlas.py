@@ -30,7 +30,6 @@ from atlas import (
     ensure_minio_bucket_docker,
     ensure_production_storage_credentials,
     main,
-    print_storage_notice,
     public_base_url_from_hostname,
     start_containers,
     verify_tunnel_connection,
@@ -592,13 +591,6 @@ class AtlasScriptHelpersTest(unittest.TestCase):
             check=False,
         )
 
-    def test_development_bucket_verification_delegates_creation(self) -> None:
-        output = StringIO()
-        with patch("atlas.subprocess.run", return_value=CompletedProcess([], 1)), redirect_stdout(output):
-            ensure_minio_bucket_docker()
-
-        self.assertIn("Development bucket initialization delegated", output.getvalue())
-
     def test_bucket_verification_uses_configured_bucket(self) -> None:
         with (
             patch.dict("os.environ", {"MINIO_BUCKET": "mission-media"}, clear=True),
@@ -607,20 +599,6 @@ class AtlasScriptHelpersTest(unittest.TestCase):
             ensure_minio_bucket_docker(production=True)
 
         self.assertEqual(run.call_args.args[0][-1], "local/mission-media")
-
-    def test_reset_volumes_help_limits_option_to_development(self) -> None:
-        output = StringIO()
-        with patch.object(sys, "argv", ["atlas.py", "--help"]), redirect_stdout(output):
-            with self.assertRaises(SystemExit) as exit_result:
-                main()
-
-        self.assertEqual(exit_result.exception.code, 0)
-        help_text = output.getvalue()
-        self.assertIn("--reset-volumes", help_text)
-        self.assertIn(
-            "This option is disabled for production storage",
-            " ".join(help_text.split()),
-        )
 
     def test_production_reset_volumes_is_rejected_before_start(self) -> None:
         with (
@@ -817,13 +795,6 @@ class AtlasScriptHelpersTest(unittest.TestCase):
         with patch.dict("os.environ", {}, clear=True):
             self.assertTrue(database_recreate_on_startup_enabled(production=False))
             self.assertFalse(database_recreate_on_startup_enabled(production=True))
-
-    def test_storage_notice_describes_selected_mode(self) -> None:
-        with patch.dict("os.environ", {}, clear=True), patch("builtins.print") as output:
-            print_storage_notice(production=False)
-            self.assertIn("clears resource rows", output.call_args.args[0])
-            print_storage_notice(production=True)
-            self.assertIn("Durable storage mode", output.call_args.args[0])
 
     def test_public_base_url_from_hostname_formats_bare_hostnames(self) -> None:
         self.assertEqual(public_base_url_from_hostname("example.com"), "https://example.com")

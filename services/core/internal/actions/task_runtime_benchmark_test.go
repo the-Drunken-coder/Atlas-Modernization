@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // BenchmarkRuntimeRestartFencing measures the complete runtime registration
@@ -77,9 +79,31 @@ func BenchmarkRuntimeRestartFencing(b *testing.B) {
 					cancel()
 					b.Fatalf("fenced benchmark Tasks = %d, want %d", failed, taskCount)
 				}
-				cleanupFinalBlobValidationRows(ctx, b, pool, assetID, "")
+				cleanupRuntimeBenchmarkAsset(ctx, b, pool, assetID)
 				cancel()
 			}
 		})
+	}
+}
+
+func cleanupRuntimeBenchmarkAsset(ctx context.Context, t testing.TB, pool *pgxpool.Pool, entityID string) {
+	t.Helper()
+	if entityID != "" {
+		if _, err := pool.Exec(ctx, `DELETE FROM tasks WHERE asset_id = $1`, entityID); err != nil {
+			t.Errorf("cleanup tasks for entity %q: %v", entityID, err)
+		}
+		if _, err := pool.Exec(ctx, `DELETE FROM entities WHERE entity_id = $1`, entityID); err != nil {
+			t.Errorf("cleanup entity row %q: %v", entityID, err)
+		}
+		if _, err := pool.Exec(ctx, `DELETE FROM asset_runtime_generations WHERE asset_id = $1`, entityID); err != nil {
+			t.Errorf("cleanup runtime generations for entity %q: %v", entityID, err)
+		}
+		if _, err := pool.Exec(ctx, `
+			DELETE FROM atlas_change_events
+			WHERE (event->>'resource_type' = 'entity' AND event->>'id' = $1)
+				OR task_asset_id = $1
+		`, entityID); err != nil {
+			t.Errorf("cleanup entity change rows %q: %v", entityID, err)
+		}
 	}
 }

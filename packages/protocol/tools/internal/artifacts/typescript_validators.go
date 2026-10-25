@@ -19,8 +19,6 @@ var runtimeValidatorTypeNames = []string{
 	"SpatialOperationResult",
 	"ProtocolRevisionResponse",
 	"EntityCheckInRequest",
-	"EntityCheckInFullResponse",
-	"EntityCheckInMinimalResponse",
 	"EntityCheckInResponse",
 	"FullDatasetResponse",
 	"ChangedSinceResponse",

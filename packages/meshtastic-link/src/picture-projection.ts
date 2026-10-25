@@ -114,24 +114,30 @@ function responsePublications(
             ...output.objects.map((object) => objectPublication(objectSummary(object), operationID, provenance))
           ]
         : [];
-    case "query.changed_since":
-      return isChangedSinceResponse(output)
-        ? collapseChangedSinceEvents(output.events).flatMap((event) => {
-            if (event.event !== "delete") {
-              switch (event.resource_type) {
-                case "entity":
-                  return [entityPublication(event.resource, operationID, provenance)];
-                case "task":
-                  return [taskPublication(event.resource, operationID, provenance)];
-                case "object":
-                  return [objectPublication(event.resource, operationID, provenance)];
-              }
-            }
-            return [
-              deletedPublication(event.resource_type, event.id, event.version, operationID, observedAt, provenance)
-            ];
-          })
-        : [];
+    case "query.changed_since": {
+      if (!isChangedSinceResponse(output)) return [];
+      const publications: StatePublication[] = [];
+      for (const event of collapseChangedSinceEvents(output.events)) {
+        if (event.event === "delete") {
+          publications.push(
+            deletedPublication(event.resource_type, event.id, event.version, operationID, observedAt, provenance)
+          );
+          continue;
+        }
+        switch (event.resource_type) {
+          case "entity":
+            publications.push(entityPublication(event.resource, operationID, provenance));
+            break;
+          case "task":
+            publications.push(taskPublication(event.resource, operationID, provenance));
+            break;
+          case "object":
+            publications.push(objectPublication(event.resource, operationID, provenance));
+            break;
+        }
+      }
+      return publications;
+    }
     case "entity.history":
     case "entity.trail":
     case "entity.inspect_movement":

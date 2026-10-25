@@ -472,12 +472,12 @@ export class SyncEngine {
         undefined,
         signal
       );
+      assertExpectedResourceID(type, id, resource);
     } catch (error) {
       if (isResourceNotFound(error, type) && this.cache.applyPointNotFound(pointRead)) this.notifySnapshot();
       else if (this.cache.completePointRead(pointRead)) this.notifySnapshot();
       throw error;
     }
-    assertExpectedResourceID(type, id, resource);
     if (this.cache.applyPointRead(pointRead, resource, cacheOptions)) this.notifySnapshot();
     return resource;
   }
@@ -512,7 +512,6 @@ export class SyncEngine {
     id: string,
     path: string,
     body: EntityCheckInRequest,
-    fields: "full" | "minimal",
     ifMatchVersion?: number,
     signal?: AbortSignal
   ): Promise<EntityCheckInResponse> {
@@ -520,7 +519,7 @@ export class SyncEngine {
     const response = await this.transport.json(
       "POST",
       path,
-      entityCheckInResponseValidator(normalizedID, fields),
+      entityCheckInResponseValidator(normalizedID),
       body,
       ifMatchVersion,
       signal
@@ -702,16 +701,16 @@ export class SyncEngine {
       if (!isCurrentHydration()) return undefined;
       const response = await this.transport.json("GET", fullDatasetPath(cursors), isFullDatasetResponse);
       if (!isCurrentHydration()) return undefined;
-      const responseVersion = requireFullDatasetVersion(response.version);
+      const responseVersion = response.version;
       if (snapshotVersion !== undefined && responseVersion !== snapshotVersion) {
         throw new Error(
           `Atlas full-dataset pagination changed version watermark from ${snapshotVersion} to ${responseVersion}`
         );
       }
       snapshotVersion = responseVersion;
-      entities.push(...(response.entities ?? []));
-      tasks.push(...(response.tasks ?? []));
-      objects.push(...(response.objects ?? []));
+      entities.push(...response.entities);
+      tasks.push(...response.tasks);
+      objects.push(...response.objects);
       cursors = nextFullDatasetCursors(response);
       assertPaginationProgress("full-dataset", cursors, seenCursors);
     } while (hasMoreFullDataset(cursors));
@@ -927,11 +926,9 @@ function fullDatasetPath(cursors: FullDatasetCursors): string {
 
 function nextFullDatasetCursors(response: FullDatasetResponse): FullDatasetCursors {
   const cursors: FullDatasetCursors = {};
-  if (response.has_more_entities)
-    cursors.entity_cursor = requireCursor(response.next_entity_cursor, "next_entity_cursor");
-  if (response.has_more_tasks) cursors.task_cursor = requireCursor(response.next_task_cursor, "next_task_cursor");
-  if (response.has_more_objects)
-    cursors.object_cursor = requireCursor(response.next_object_cursor, "next_object_cursor");
+  if (response.has_more_entities) cursors.entity_cursor = response.next_entity_cursor;
+  if (response.has_more_tasks) cursors.task_cursor = response.next_task_cursor;
+  if (response.has_more_objects) cursors.object_cursor = response.next_object_cursor;
   return cursors;
 }
 
@@ -960,20 +957,6 @@ function assertPaginationProgress(label: string, cursors: object, seen: Map<stri
     if (values.has(cursor)) throw new Error(`Atlas ${label} pagination repeated ${stream}`);
     values.add(cursor);
   }
-}
-
-function requireCursor(cursor: string | undefined, name: string): string {
-  if (!cursor) {
-    throw new Error(`Atlas response set ${name.replace(/^next_/, "has_more_")} without ${name}`);
-  }
-  return cursor;
-}
-
-function requireFullDatasetVersion(version: number): number {
-  if (!Number.isSafeInteger(version) || version < 0) {
-    throw new Error("Atlas full-dataset response version watermark must be a non-negative safe integer");
-  }
-  return version;
 }
 
 function reportWatchCallbackError(error: unknown): void {

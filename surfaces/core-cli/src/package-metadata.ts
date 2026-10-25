@@ -5,7 +5,7 @@ export const PACKAGE_IMAGE: string | undefined = undefined;
 export const PACKAGE_PLUGIN_CONTRACTS = {
   coreToPluginProtocolMajors: [1],
   pluginToSourceGatewayProtocolMajors: [1],
-  atlasProtocolRevision: "sha256:6cb482d1c7f2344d88c3eff5a828653fd6a52743afb2177b3c44da17fb82b518",
+  atlasProtocolRevision: "sha256:90dc0125b5ff56f8645eee6a6829a0135962f868adc4c641fef24aa3835a4a2b",
   supportedPackageSchemaMajors: [1],
   supportedInteractions: ["map_area"]
 } as const;

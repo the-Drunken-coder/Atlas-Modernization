@@ -28,12 +28,11 @@ func flightTestManifest() protocol.CommandManifest {
 func setupFlightAsset(ctx context.Context, t *testing.T, assetID string) *TaskActions {
 	t.Helper()
 	pool := openActionsTestPool(t)
-	t.Cleanup(func() { cleanupFinalBlobValidationRowsWithTimeout(t, pool, assetID, "") })
 	entities := NewEntityActions(pool)
 	if _, err := entities.Create(ctx, CreateEntityParams{EntityID: assetID, EntityType: "asset"}); err != nil {
 		t.Fatalf("create Asset: %v", err)
 	}
-	tasks := NewTaskActions(pool)
+	tasks := NewTaskActionsWithPlugins(pool, nil)
 	if err := tasks.BeginRuntimeRegistration(ctx, assetID, "runtime-flight-1"); err != nil {
 		t.Fatalf("begin runtime: %v", err)
 	}

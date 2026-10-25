@@ -25,11 +25,6 @@ type TaskActions struct {
 	pluginAssets map[string]string
 }
 
-// NewTaskActions creates the production Task module from the generated catalog.
-func NewTaskActions(pool *pgxpool.Pool) *TaskActions {
-	return NewTaskActionsWithPlugins(pool, nil)
-}
-
 func NewTaskActionsWithPlugins(pool *pgxpool.Pool, pluginIDs []string) *TaskActions {
 	var catalog protocol.CommandCatalog
 	if err := json.Unmarshal([]byte(protocol.CommandCatalogJSON), &catalog); err != nil {

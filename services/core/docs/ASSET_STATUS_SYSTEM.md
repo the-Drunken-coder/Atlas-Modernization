@@ -121,7 +121,7 @@ Response:
 }
 ```
 
-The optional `fields=minimal` query selects the generated minimal response shape. It does not change Task delivery.
+Check-in returns `EntityCheckInResponse` containing the updated Entity. Task delivery is separate.
 
 ### Get Entity
 

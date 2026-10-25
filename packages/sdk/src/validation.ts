@@ -2,8 +2,6 @@ import type { ResponseValidator } from "./http.js";
 import {
   type ChangedSinceResponse,
   type CommandCatalog,
-  type EntityCheckInFullResponse,
-  type EntityCheckInMinimalResponse,
   type EntityCheckInResponse,
   type EntityResource,
   type FeedEvent,
@@ -14,8 +12,7 @@ import {
   isFeedSubscriptionsReadyMessage,
   isChangedSinceResponse as isGeneratedChangedSinceResponse,
   isCommandCatalog as isGeneratedCommandCatalog,
-  isEntityCheckInFullResponse as isGeneratedEntityCheckInFullResponse,
-  isEntityCheckInMinimalResponse as isGeneratedEntityCheckInMinimalResponse,
+  isEntityCheckInResponse as isGeneratedEntityCheckInResponse,
   isEntityResource as isGeneratedEntityResource,
   isFeedEvent as isGeneratedFeedEvent,
   isFullDatasetResponse as isGeneratedFullDatasetResponse,
@@ -39,47 +36,32 @@ import {
   type RuntimeTaskDeliveryResponse,
   type TaskResource
 } from "./protocol.js";
-import type { EntityCheckInFields, MovementHistoryQuery, MovementTrailQuery } from "./types.js";
+import type { MovementHistoryQuery, MovementTrailQuery } from "./types.js";
 
 export const isCommandCatalog: ResponseValidator<CommandCatalog> = isGeneratedCommandCatalog;
 
 export const isProtocolRevisionResponse: ResponseValidator<ProtocolRevisionResponse> =
   isGeneratedProtocolRevisionResponse;
 
-export const isEntityResource: ResponseValidator<EntityResource> = (value): value is EntityResource =>
-  isGeneratedEntityResource(value) && isFeedVersion(value.metadata.version);
+export const isEntityResource: ResponseValidator<EntityResource> = isGeneratedEntityResource;
 
-export const isTaskResource: ResponseValidator<TaskResource> = (value): value is TaskResource =>
-  isGeneratedTaskResource(value);
+export const isTaskResource: ResponseValidator<TaskResource> = isGeneratedTaskResource;
 
-export const isObjectResource: ResponseValidator<ObjectResource> = (value): value is ObjectResource =>
-  isGeneratedObjectResource(value) && isFeedVersion(value.metadata.version);
+export const isObjectResource: ResponseValidator<ObjectResource> = isGeneratedObjectResource;
 
-export const isObjectDetailResource: ResponseValidator<ObjectDetailResource> = (value): value is ObjectDetailResource =>
-  isGeneratedObjectDetailResource(value) && isFeedVersion(value.metadata.version);
+export const isObjectDetailResource: ResponseValidator<ObjectDetailResource> = isGeneratedObjectDetailResource;
 
 export const isRuntimeTaskDeliveryResponse: ResponseValidator<RuntimeTaskDeliveryResponse> =
   isGeneratedRuntimeTaskDeliveryResponse;
 
-export const isFullDatasetResponse: ResponseValidator<FullDatasetResponse> = (value): value is FullDatasetResponse =>
-  isGeneratedFullDatasetResponse(value) &&
-  value.entities.every(isEntityResource) &&
-  value.tasks.every(isTaskResource) &&
-  value.objects.every(isObjectDetailResource) &&
-  isSafeNonNegativeInteger(value.version) &&
-  hasValidPagination(value.has_more_entities, value.next_entity_cursor) &&
-  hasValidPagination(value.has_more_tasks, value.next_task_cursor) &&
-  hasValidPagination(value.has_more_objects, value.next_object_cursor);
+export const isFullDatasetResponse: ResponseValidator<FullDatasetResponse> = isGeneratedFullDatasetResponse;
 
 export function changedSinceResponseValidator(sinceVersion: number): ResponseValidator<ChangedSinceResponse> {
   return (value): value is ChangedSinceResponse => {
     if (
       !isSafeNonNegativeInteger(sinceVersion) ||
       !isGeneratedChangedSinceResponse(value) ||
-      !value.events.every(isInboundFeedEvent) ||
-      !isSafeNonNegativeInteger(value.version) ||
       value.version < sinceVersion ||
-      !hasValidPagination(value.has_more, value.next_cursor) ||
       (value.has_more && value.events.length === 0)
     ) {
       return false;
@@ -90,25 +72,14 @@ export function changedSinceResponseValidator(sinceVersion: number): ResponseVal
     return value.events.every((event) => {
       const ordered = event.version > previousVersion && event.version <= highWaterVersion;
       previousVersion = event.version;
-      return ordered;
+      return ordered && hasValidFeedEventContext(event);
     });
   };
 }
 
-export function entityCheckInResponseValidator(
-  expectedEntityID: string,
-  _fields: EntityCheckInFields
-): ResponseValidator<EntityCheckInResponse> {
+export function entityCheckInResponseValidator(expectedEntityID: string): ResponseValidator<EntityCheckInResponse> {
   return (value): value is EntityCheckInResponse =>
-    (isGeneratedEntityCheckInFullResponse(value) || isGeneratedEntityCheckInMinimalResponse(value)) &&
-    hasValidEntityCheckInContext(value, expectedEntityID);
-}
-
-function hasValidEntityCheckInContext(
-  value: EntityCheckInFullResponse | EntityCheckInMinimalResponse,
-  expectedEntityID: string
-): boolean {
-  return isEntityResource(value.entity) && value.entity.entity_id === expectedEntityID;
+    isGeneratedEntityCheckInResponse(value) && value.entity.entity_id === expectedEntityID;
 }
 
 export function isInboundFeedHandshake(value: unknown): value is FeedHandshakeMessage {
@@ -120,7 +91,10 @@ export function isInboundFeedSubscriptionsReady(value: unknown): value is FeedSu
 }
 
 export function isInboundFeedEvent(value: unknown): value is FeedEvent {
-  if (!isGeneratedFeedEvent(value) || !isFeedVersion(value.version)) return false;
+  return isGeneratedFeedEvent(value) && hasValidFeedEventContext(value);
+}
+
+function hasValidFeedEventContext(value: FeedEvent): boolean {
   if (value.event === "delete") return true;
   switch (value.resource_type) {
     case "entity":
@@ -132,16 +106,8 @@ export function isInboundFeedEvent(value: unknown): value is FeedEvent {
   }
 }
 
-function hasValidPagination(hasMore: boolean, nextCursor: string | undefined): boolean {
-  return hasMore ? isNonEmptyString(nextCursor) : nextCursor === undefined;
-}
-
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim() !== "";
-}
-
-function isFeedVersion(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
 
 function isSafeNonNegativeInteger(value: unknown): value is number {

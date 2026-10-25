@@ -186,8 +186,7 @@ func (h *Handler) EntityCheckin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.checkinActions.CheckIn(r.Context(), actions.EntityCheckinParams{
-		EntityID:           entityID,
+	result, err := h.entityActions.Update(r.Context(), entityID, actions.UpdateEntityParams{
 		Components:         checkinComponentUpdate(req, received),
 		MovementObservedAt: req.MovementObservedAt,
 		MovementReceivedAt: received,
@@ -198,13 +197,13 @@ func (h *Handler) EntityCheckin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	serializedEntity := serializers.SerializeEntity(result.Entity)
+	serializedEntity := serializers.SerializeEntity(result)
 	if serializedEntity == nil {
 		h.writeError(w, r, http.StatusInternalServerError, "Entity check-in returned no entity", protocol.ErrorCodeInternalServerError)
 		return
 	}
-	setResourceETag(w, result.Entity.Version)
-	writeJSON(w, r, http.StatusOK, protocol.EntityCheckInFullResponse{Entity: *serializedEntity})
+	setResourceETag(w, result.Version)
+	writeJSON(w, r, http.StatusOK, protocol.EntityCheckInResponse{Entity: *serializedEntity})
 }
 
 func buildTelemetryComponent(latitude, longitude, altitudeM, speedMS, headingDeg *float64, lastUpdate *string) map[string]interface{} {

@@ -51,7 +51,7 @@ func TestRealStorageInterruptedUploadRecovery(t *testing.T) {
 			defer cancel()
 
 			objectID := newStorageRecoveryObjectID(t)
-			defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
+
 			oldPath := ""
 			oldBody := []byte("retained replacement body")
 			if replacement {
@@ -179,7 +179,7 @@ func TestRealStorageDeletionRecoveryRetriesAndProtectsLiveContent(t *testing.T) 
 		defer cancel()
 
 		objectID := newStorageRecoveryObjectID(t)
-		defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
+
 		path := storageClient.NewObjectPath(objectID)
 		body := []byte("queued deletion body")
 		uploadStorageFixture(ctx, t, storageClient, objectID, path, body)
@@ -246,7 +246,7 @@ func TestRealStorageDeletionRecoveryRetriesAndProtectsLiveContent(t *testing.T) 
 		defer cancel()
 
 		objectID := newStorageRecoveryObjectID(t)
-		defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
+
 		path := storageClient.NewObjectPath(objectID)
 		body := []byte("live resource body")
 		uploadStorageFixture(ctx, t, storageClient, objectID, path, body)
@@ -299,7 +299,7 @@ func TestRealStorageFailedUploadNeverCommitsMetadata(t *testing.T) {
 	defer cancel()
 
 	objectID := newStorageRecoveryObjectID(t)
-	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
+
 	_, err := NewObjectActions(pool, storageClient).Upload(
 		ctx, objectID, strings.NewReader("unavailable storage"), int64(len("unavailable storage")), "text/plain", "data", nil,
 	)

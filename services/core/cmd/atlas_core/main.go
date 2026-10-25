@@ -220,7 +220,7 @@ func main() {
 		pluginEndpoints = append(pluginEndpoints, plugins.Endpoint{ID: configured.ID, BaseURL: configured.BaseURL})
 	}
 	pluginRegistry := plugins.New(runtimeCtx, pluginEndpoints, plugins.Options{})
-	handler := handlers.NewHandlerWithPlugins(db, storageClient, logger, cfg, feedHub, adminAuth, pluginRegistry)
+	handler := handlers.NewHandler(db, storageClient, logger, cfg, feedHub, adminAuth, pluginRegistry, taskActions)
 
 	r := chi.NewRouter()
 

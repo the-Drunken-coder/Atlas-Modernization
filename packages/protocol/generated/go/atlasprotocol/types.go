@@ -411,11 +411,7 @@ type ObjectDetailResource struct {
 	Extra        map[string]JSONValue `json:"extra"`
 }
 
-type EntityCheckInFullResponse struct {
-	Entity EntityResource `json:"entity"`
-}
-
-type EntityCheckInMinimalResponse struct {
+type EntityCheckInResponse struct {
 	Entity EntityResource `json:"entity"`
 }
 

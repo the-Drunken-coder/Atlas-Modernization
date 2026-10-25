@@ -9,9 +9,9 @@ import (
 	"time"
 )
 
-func TestEncodeDecodeRowCursor_roundTrip(t *testing.T) {
+func TestEncodeDecodeRowCursorRoundTrip(t *testing.T) {
 	ts := time.Date(2026, 3, 20, 12, 0, 0, 123456789, time.UTC)
-	id := "entity-abc"
+	id := "entity,with:chars+/=_-"
 	ub := time.Date(2026, 3, 20, 15, 30, 0, 0, time.UTC)
 	enc, err := encodeRowCursor(ts, id, ub)
 	if err != nil {
@@ -68,30 +68,6 @@ func TestDecodeRowCursorRejectsMissingSnapshotTime(t *testing.T) {
 
 	if _, _, _, err := decodeRowCursor(cursor); err == nil || !strings.Contains(err.Error(), "snapshot time") {
 		t.Fatalf("decodeRowCursor missing snapshot time error = %v, want snapshot time error", err)
-	}
-}
-
-func TestDecodeRowCursor_specialChars(t *testing.T) {
-	ts := time.Date(2026, 3, 20, 12, 0, 0, 123456789, time.UTC)
-	id := "entity,with:chars+/=_-"
-	ub := time.Date(2026, 3, 20, 15, 30, 0, 0, time.UTC)
-
-	cursor, err := encodeRowCursor(ts, id, ub)
-	if err != nil {
-		t.Fatalf("encode: %v", err)
-	}
-	gotTS, gotID, gotUB, err := decodeRowCursor(cursor)
-	if err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if gotID != id {
-		t.Fatalf("id: got %q want %q", gotID, id)
-	}
-	if !gotTS.Equal(ts) {
-		t.Fatalf("time: got %v want %v", gotTS, ts)
-	}
-	if !gotUB.Equal(ub) {
-		t.Fatalf("upper bound: got %v want %v", gotUB, ub)
 	}
 }
 
@@ -205,7 +181,7 @@ func TestContinuationUpperBoundMixedSnapshotsReturnsValidationError(t *testing.T
 		upperBound: ts.Add(2 * time.Minute),
 	}
 
-	_, _, err := continuationUpperBound(time.Now().UTC(), first, second)
+	_, _, err := continuationUpperBound(ts, first, second)
 	if err == nil {
 		t.Fatal("expected mixed cursor snapshots to fail")
 	}

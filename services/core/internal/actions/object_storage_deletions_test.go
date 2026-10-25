@@ -19,7 +19,6 @@ func TestQueueStorageDeletionRequeueResetsRetryState(t *testing.T) {
 
 	objectID := fmt.Sprintf("requeue-%d", time.Now().UTC().UnixNano())
 	path := fmt.Sprintf("objects/%s/blob", objectID)
-	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
 
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO storage_deletion_outbox (bucket, path, object_id, attempts, last_error, next_attempt_at)
@@ -65,7 +64,6 @@ func TestQueueStorageDeletionAfterFailurePreservesRetryAttempts(t *testing.T) {
 
 	objectID := fmt.Sprintf("failure-requeue-%d", time.Now().UTC().UnixNano())
 	path := fmt.Sprintf("objects/%s/blob", objectID)
-	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
 
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO storage_deletion_outbox (bucket, path, object_id, attempts, last_error, next_attempt_at)
@@ -113,8 +111,6 @@ func TestReconcileStorageDeletionDrainsQueueAfterUploadRecoveryFailure(t *testin
 	recoveryPath := fmt.Sprintf("objects/%s/blob", recoveryObjectID)
 	queuedObjectID := fmt.Sprintf("queued-after-recovery-failure-%d", time.Now().UTC().UnixNano())
 	queuedPath := fmt.Sprintf("objects/%s/blob", queuedObjectID)
-	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, recoveryObjectID)
-	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, queuedObjectID)
 
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO storage_upload_intents
@@ -196,7 +192,6 @@ func TestReconcileStorageDeletionPreservesPathThatBecameLive(t *testing.T) {
 
 	objectID := fmt.Sprintf("live-deletion-%d", time.Now().UTC().UnixNano())
 	path := fmt.Sprintf("objects/%s/blob", objectID)
-	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
 
 	createStoredObjectFixture(ctx, t, pool, objectID, path)
 	if _, err := pool.Exec(ctx, `
@@ -225,7 +220,6 @@ func TestReconcileStorageDeletionPreservesPathThatBecameLive(t *testing.T) {
 }
 
 func TestReconcileStorageDeletionRejectsLivePathWithoutBucket(t *testing.T) {
-	pool := openActionsTestPool(t)
 	for _, tt := range []struct {
 		name     string
 		metadata string
@@ -234,11 +228,11 @@ func TestReconcileStorageDeletionRejectsLivePathWithoutBucket(t *testing.T) {
 		{name: "blank", metadata: `{"bucket":" ","size_bytes":3}`},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			pool := openActionsTestPool(t)
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			objectID := fmt.Sprintf("invalid-live-deletion-%s-%d", tt.name, time.Now().UTC().UnixNano())
 			path := fmt.Sprintf("objects/%s/blob", objectID)
-			defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
 
 			createStoredObjectFixture(ctx, t, pool, objectID, path)
 			if _, err := pool.Exec(ctx, `UPDATE objects SET json = $2::jsonb WHERE object_id = $1`, objectID, tt.metadata); err != nil {
@@ -278,7 +272,6 @@ func TestReconcileStorageDeletionUsesQueuedBucketForSamePath(t *testing.T) {
 
 	objectID := fmt.Sprintf("same-path-bucket-%d", time.Now().UTC().UnixNano())
 	path := fmt.Sprintf("objects/%s/blob", objectID)
-	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
 
 	createStoredObjectFixture(ctx, t, pool, objectID, path)
 	if _, err := pool.Exec(ctx, `UPDATE objects SET json = '{"bucket":"atlas-current"}'::jsonb WHERE object_id = $1`, objectID); err != nil {
