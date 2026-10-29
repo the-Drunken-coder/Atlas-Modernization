@@ -1,3 +1,5 @@
+> **Retired.** This repository is no longer maintained. Development moved to [atlas-field-systems/atlas-core](https://github.com/atlas-field-systems/atlas-core).
+
 # Atlas Modernization
 
 This workspace is the Atlas monorepo. Hosted services, operator surfaces, field software, reusable packages, simulations, cross-system tests, and project docs move together without sharing ownership.
