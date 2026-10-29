@@ -1,9 +1,11 @@
 # Atlas Modernization — documentation index
 
-_Revision: 2026-09-13_
+_Repository scope clarified: 2026-10-29_
 
 This is the single entry point for project documentation. Docs are split into **project-level**
 (this `docs/` tree, spanning every package) and **package-level** (each package's own `docs/`).
+
+For the active Protocol/Core/SDK contract, use [atlas-field-systems/atlas-core](https://github.com/atlas-field-systems/atlas-core). The documents below remain specific to this earlier monorepo and its source revision. The [repository overview](../README.md) explains the relationship.
 
 ## Project-level docs (here)
 
