@@ -2,7 +2,9 @@
 
 # Atlas Modernization
 
-This workspace is the Atlas monorepo. Hosted services, operator surfaces, field software, reusable packages, simulations, cross-system tests, and project docs move together without sharing ownership.
+This workspace contains the earlier Atlas monorepo implementation. Hosted services, operator surfaces, field software, reusable packages, simulations, cross-system tests, and project docs move together without sharing ownership.
+
+Current Protocol/Core/SDK development is in [atlas-field-systems/atlas-core](https://github.com/atlas-field-systems/atlas-core). This repository's Go service, SDK, operator surface, database/storage layout and deployment commands describe this codebase. They are not implementation or compatibility claims for the newer TypeScript/SQLite Core. No automatic migration, protocol compatibility, or transfer of qualification evidence between the two repositories is implied.
 
 ## JavaScript toolchain
 
